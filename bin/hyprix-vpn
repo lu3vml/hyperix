@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Indicador de VPN: WireGuard, OpenVPN (tun), Tailscale, PPP o VPN de NetworkManager
+names=$(ip -o link show up 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 \
+        | grep -E '^(wg|tun|tap|tailscale|ppp|nordlynx|proton|mullvad)' | tr '\n' ' ')
+nmv=$(nmcli -t -f NAME,TYPE con show --active 2>/dev/null | awk -F: '$2 ~ /vpn|wireguard/ {print $1}' | tr '\n' ' ')
+act="${nmv:-$names}"
+if [[ -n ${act// } ]]; then
+  printf '{"text":"%s VPN","class":"on","tooltip":"VPN activa: %s"}\n' $'' "${act% }"
+else
+  echo '{"text":"","class":"off"}'
+fi

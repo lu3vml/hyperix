@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# hyprix-theme — aplica el tema (colores) + ajustes (fuentes, tamaños, alphas)
+#   hyprix-theme             menú con fuzzel
+#   hyprix-theme <nombre>    aplica un tema
+#   hyprix-theme --list      lista temas
+set -euo pipefail
+export LC_NUMERIC=C
+H="$HOME/.config/hyprix"; T="$H/themes"; TPL="$H/templates"; CUR="$H/current"
+list() { for f in "$T"/*.theme; do basename "$f" .theme; done; }
+
+case "${1:-}" in
+  ""|--menu)
+    sel=$(list | fuzzel --dmenu --prompt "Tema › ") || exit 0
+    [[ -n "$sel" ]] || exit 0
+    set -- "$sel" ;;
+  --list) list; exit 0 ;;
+esac
+
+f="$T/$1.theme"
+[[ -f "$f" ]] || { echo "Tema inexistente: $1 (disponibles: $(list | tr '\n' ' '))" >&2; exit 1; }
+
+# Ajustes por defecto + settings.conf
+FONT_MONO="JetBrainsMono Nerd Font"; FONT_UI="Inter"
+SIZE_TERM=9.5; SIZE_BAR=11; SIZE_LAUNCHER=10; SIZE_UI=9
+ALPHA_TERM=0.95; ALPHA_BAR=0.82; ALPHA_LAUNCHER=0.85; ALPHA_NOTIF=0.88
+# shellcheck disable=SC1091
+[[ -f "$H/settings.conf" ]] && source "$H/settings.conf"
+# shellcheck disable=SC1090
+source "$f"
+
+hexa() { awk -v a="$1" 'BEGIN { v = int(a * 255 + 0.5); if (v > 255) v = 255; if (v < 0) v = 0; printf "%02x", v }'; }
+
+mkdir -p "$CUR" "$HOME/.config/waybar" "$HOME/.config/foot" "$HOME/.config/mako" \
+         "$HOME/.config/fuzzel" "$HOME/.config/btop/themes"
+echo "$1" > "$H/current-theme"
+
+# Hyprland: borde activo con gradiente
+cat > "$CUR/hyprland.conf" <<EOF
+\$active = rgba(${ACCENT}ee) rgba(${C6}ee) 45deg
+\$inactive = rgba(${MUTED}66)
+EOF
+
+# hyprlock
+cat > "$CUR/hyprlock.conf" <<EOF
+\$bg = rgb($BG)
+\$fg = rgb($FG)
+\$accent = rgb($ACCENT)
+\$muted = rgb($MUTED)
+\$urgent = rgb($URGENT)
+\$font_ui = $FONT_UI
+\$font_mono = $FONT_MONO
+\$wallpaper = $CUR/wallpaper
+EOF
+
+# Waybar: colores + plantilla + fuente/tamaño/alpha del usuario
+{ cat <<EOF
+@define-color bg #$BG;
+@define-color fg #$FG;
+@define-color accent #$ACCENT;
+@define-color muted #$MUTED;
+@define-color urgent #$URGENT;
+@define-color warn #$WARN;
+EOF
+  cat "$TPL/waybar.css"
+  cat <<EOF
+
+/* --- hyprix-config --- */
+* { font-family: "$FONT_MONO", "Font Awesome 6 Free", monospace; font-size: ${SIZE_BAR}px; }
+window#waybar { background: alpha(@bg, $ALPHA_BAR); }
+EOF
+} > "$HOME/.config/waybar/style.css"
+
+# foot
+cat > "$HOME/.config/foot/foot.ini" <<EOF
+[main]
+selection-target=both
+font=$FONT_MONO:size=$SIZE_TERM, JetBrains Mono:size=$SIZE_TERM
+font-bold=$FONT_MONO:size=$SIZE_TERM:weight=bold
+dpi-aware=no
+pad=14x12
+term=xterm-256color
+
+[scrollback]
+lines=10000
+
+[cursor]
+style=block
+blink=no
+
+[mouse]
+hide-when-typing=yes
+
+[mouse-bindings]
+select-extend=none
+clipboard-paste=BTN_RIGHT
+primary-paste=BTN_MIDDLE
+
+[colors]
+alpha=$ALPHA_TERM
+background=$BG
+foreground=$FG
+selection-background=$MUTED
+selection-foreground=$FG
+regular0=$C0
+regular1=$C1
+regular2=$C2
+regular3=$C3
+regular4=$C4
+regular5=$C5
+regular6=$C6
+regular7=$C7
+bright0=$C8
+bright1=$C9
+bright2=$C10
+bright3=$C11
+bright4=$C12
+bright5=$C13
+bright6=$C14
+bright7=$C15
+EOF
+
+# mako
+cat > "$HOME/.config/mako/config" <<EOF
+font=$FONT_UI $SIZE_UI
+background-color=#${BG}$(hexa "$ALPHA_NOTIF")
+text-color=#$FG
+border-color=#$ACCENT
+progress-color=over #$MUTED
+border-size=1
+border-radius=0
+width=340
+padding=12,14
+margin=12
+outer-margin=6
+anchor=${NOTIF_POS:-top-right}
+default-timeout=${NOTIF_TIMEOUT:-5000}
+max-icon-size=40
+
+[urgency=low]
+border-color=#$MUTED
+
+[urgency=critical]
+border-color=#$URGENT
+default-timeout=0
+EOF
+
+# fuzzel
+LH=$(awk -v s="$SIZE_LAUNCHER" 'BEGIN { printf "%d", s * 1.9 + 0.5 }')
+cat > "$HOME/.config/fuzzel/fuzzel.ini" <<EOF
+[main]
+font=$FONT_MONO:size=$SIZE_LAUNCHER
+terminal=foot -e
+prompt="› "
+width=40
+lines=12
+horizontal-pad=18
+vertical-pad=14
+inner-pad=8
+line-height=$LH
+
+[colors]
+background=${BG}$(hexa "$ALPHA_LAUNCHER")
+text=${FG}cc
+prompt=${ACCENT}ff
+input=${FG}ff
+placeholder=${MUTED}ff
+match=${ACCENT}ff
+selection=${MUTED}88
+selection-text=${FG}ff
+selection-match=${ACCENT}ff
+border=${ACCENT}ff
+
+[border]
+width=1
+radius=0
+EOF
+
+# btop
+cat > "$HOME/.config/btop/themes/hyprix.theme" <<EOF
+theme[main_bg]="#$BG"
+theme[main_fg]="#$FG"
+theme[title]="#$FG"
+theme[hi_fg]="#$ACCENT"
+theme[selected_bg]="#$MUTED"
+theme[selected_fg]="#$FG"
+theme[inactive_fg]="#$MUTED"
+theme[proc_misc]="#$ACCENT"
+theme[cpu_box]="#$MUTED"
+theme[mem_box]="#$MUTED"
+theme[net_box]="#$MUTED"
+theme[proc_box]="#$MUTED"
+theme[div_line]="#$MUTED"
+theme[temp_start]="#$C2"
+theme[temp_mid]="#$WARN"
+theme[temp_end]="#$URGENT"
+theme[cpu_start]="#$ACCENT"
+theme[cpu_mid]="#$WARN"
+theme[cpu_end]="#$URGENT"
+theme[free_start]="#$C2"
+theme[cached_start]="#$C4"
+theme[available_start]="#$C6"
+theme[used_start]="#$ACCENT"
+theme[download_start]="#$C2"
+theme[upload_start]="#$C5"
+EOF
+[[ -f "$HOME/.config/btop/btop.conf" ]] || printf 'color_theme = "hyprix"\ntheme_background = True\n' > "$HOME/.config/btop/btop.conf"
+
+# GTK: fuente de interfaz + acento libadwaita según el tema
+for g in "$HOME/.config/gtk-3.0/settings.ini" "$HOME/.config/gtk-4.0/settings.ini"; do
+  [[ -f $g ]] && sed -i "s/^gtk-font-name=.*/gtk-font-name=$FONT_UI $SIZE_UI/" "$g"
+done
+gsettings set org.gnome.desktop.interface font-name "$FONT_UI $SIZE_UI" 2>/dev/null || true
+gsettings set org.gnome.desktop.interface monospace-font-name "$FONT_MONO $SIZE_UI" 2>/dev/null || true
+case "$1" in
+  tokyo-night) ACC=blue;   FOLDERS=indigo ;;
+  gruvbox)     ACC=yellow; FOLDERS=paleorange ;;
+  nord)        ACC=teal;   FOLDERS=nordic ;;
+  catppuccin)  ACC=purple; FOLDERS=violet ;;
+  fosforo)     ACC=green;  FOLDERS=green ;;
+  *)           ACC=blue;   FOLDERS=blue ;;
+esac
+ACC=${GNOME_ACCENT:-$ACC}; FOLDERS=${THEME_FOLDERS:-$FOLDERS}   # los temas nuevos los traen en su archivo
+gsettings set org.gnome.desktop.interface accent-color "$ACC" 2>/dev/null || true
+
+# Acento exacto del tema en GTK3 (adw-gtk3) y GTK4/libadwaita
+cat > "$CUR/gtk3-accent.css" <<EOF
+@define-color accent_color #$ACCENT;
+@define-color accent_bg_color #$ACCENT;
+@define-color accent_fg_color #$BG;
+EOF
+cat > "$CUR/gtk4-accent.css" <<EOF
+:root { --accent-color: #$ACCENT; --accent-bg-color: #$ACCENT; --accent-fg-color: #$BG; }
+@define-color accent_color #$ACCENT;
+@define-color accent_bg_color #$ACCENT;
+@define-color accent_fg_color #$BG;
+EOF
+for v in 3 4; do
+  g="$HOME/.config/gtk-$v.0/gtk.css"; mkdir -p "${g%/*}"
+  line="@import url(\"file://$CUR/gtk$v-accent.css\"); /* HYPRIX */"
+  if ! grep -qF "gtk$v-accent.css" "$g" 2>/dev/null; then
+    { printf '%s\n' "$line"; cat "$g" 2>/dev/null || true; } > "$g.tmp"; mv "$g.tmp" "$g"
+  fi
+done
+
+# Tema GTK3 (adw-gtk3) e íconos Papirus con carpetas del color del tema
+GTK3=Adwaita-dark
+for d in "$HOME/.local/share/themes" /usr/share/themes; do
+  if [[ -d "$d/adw-gtk3-dark" ]]; then GTK3=adw-gtk3-dark; break; fi
+done
+ICONS=Adwaita
+if [[ -d /usr/share/icons/Papirus ]] && "$HOME/.local/bin/hyprix-icons" "$FOLDERS" >/dev/null 2>&1; then ICONS=HYPRIX; fi
+for g in "$HOME/.config/gtk-3.0/settings.ini" "$HOME/.config/gtk-4.0/settings.ini"; do
+  [[ -f $g ]] || continue
+  sed -i "s/^gtk-icon-theme-name=.*/gtk-icon-theme-name=$ICONS/" "$g"
+  if [[ $g == *gtk-3.0* ]]; then sed -i "s/^gtk-theme-name=.*/gtk-theme-name=$GTK3/" "$g"; fi
+done
+gsettings set org.gnome.desktop.interface gtk-theme "$GTK3" 2>/dev/null || true
+gsettings set org.gnome.desktop.interface icon-theme "$ICONS" 2>/dev/null || true
+
+# OSD centrado (swayosd)
+mkdir -p "$HOME/.config/swayosd"
+cat > "$HOME/.config/swayosd/style.css" <<EOF
+window#osd { padding: 14px 22px; border-radius: 0; border: 1px solid #$ACCENT; background: alpha(#$BG, $ALPHA_NOTIF); }
+window#osd #container { margin: 12px; }
+window#osd image, window#osd label { color: #$FG; }
+window#osd progressbar:disabled, window#osd image:disabled { opacity: 0.5; }
+window#osd progressbar { min-height: 6px; border-radius: 0; background: transparent; border: none; }
+window#osd trough { min-height: inherit; border-radius: 0; border: none; background: alpha(#$MUTED, 0.6); }
+window#osd progress { min-height: inherit; border-radius: 0; border: none; background: #$ACCENT; }
+EOF
+
+# Recarga en vivo (dentro de Hyprland o por SSH con la sesión abierta)
+if [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || hyprctl -i 0 version >/dev/null 2>&1; then
+  hyprctl -i 0 reload >/dev/null 2>&1 || true
+  # barra: reinicio completo vía systemd (con SIGUSR2 Waybar a veces se traba)
+  "$HOME/.local/bin/hyprix-bar" restart >/dev/null 2>&1 || true
+  if pgrep -x swayosd-server >/dev/null; then
+    pkill -x swayosd-server; hyprctl -i 0 dispatch exec swayosd-server >/dev/null 2>&1 || true
+  fi
+  makoctl reload 2>/dev/null || true
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] && "$HOME/.local/bin/hyprix-bg" >/dev/null 2>&1 || true
+fi
+echo "Tema aplicado: $NAME"

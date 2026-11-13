@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# hyprix-bg — fondo de pantalla, como en cualquier sistema: lo elegís vos.
+#   hyprix-bg                aplica el fondo actual (lo usan el inicio y el cambio de tema)
+#   hyprix-bg set ARCHIVO    usa esa imagen, esté donde esté
+#   hyprix-bg pick           elegir con vista previa entre tus fondos (Super+Ctrl+Espacio)
+#   hyprix-bg choose         elegir un archivo desde cualquier carpeta
+#   hyprix-bg next | prev    siguiente / anterior de tu carpeta (next-quiet: sin aviso)
+#   hyprix-bg theme          volver a los fondos del tema (cambian con el tema)
+#   hyprix-bg color          color liso del tema
+# Carpeta de fondos: ~/Imágenes/Fondos (incluye un acceso a los fondos de los temas)
+H="$HOME/.config/hyprix"; BIN="$HOME/.local/bin"
+t=$(cat "$H/current-theme" 2>/dev/null || echo tokyo-night)
+# shellcheck disable=SC1090
+source "$H/themes/$t.theme"
+WALL_MODE=tema; WALL_FILE=""; WALL_DIR=""; WALL_FILL=llenar; WALL_TRANSITION=fade
+# shellcheck disable=SC1091
+[[ -f "$H/settings.conf" ]] && source "$H/settings.conf"
+WALL_DIR=${WALL_DIR:-"$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Fondos"}
+EXT='.*\.(jpe?g|png|webp|bmp|gif)$'
+
+setq() { "$BIN/hyprix-config" --setq "$1" "$2" >/dev/null 2>&1; }
+LINK="Fondos de los temas HYPRIX"
+imgs_in() { find -L "$1" -mindepth "${2:-1}" -maxdepth "${3:-3}" -type f -regextype posix-extended -iregex "$EXT" "${@:4}" 2>/dev/null | sort; }
+# orden: tus imágenes → las del tema actual → las de los otros temas
+my_imgs() {
+  imgs_in "$WALL_DIR" 1 3 -not -path "*/$LINK/*"
+  imgs_in "$H/backgrounds/$t" 1 1
+  imgs_in "$H/backgrounds" 2 2 -not -path "$H/backgrounds/$t/*"
+}
+theme_imgs() { imgs_in "$H/backgrounds/$t" 1 1; }
+
+show() { # $1 = imagen, o vacío para color liso
+  local img=$1 m=fill r=crop A="" old c
+  case $WALL_FILL in ajustar) m=fit; r=fit ;; centrar) m=center; r=no ;; esac
+  mkdir -p "$H/current"
+  if [[ -n $img ]]; then ln -sfn "$img" "$H/current/wallpaper"; else rm -f "$H/current/wallpaper"; fi
+  for c in awww swww; do command -v "$c" >/dev/null && { A=$c; break; }; done
+  if [[ -n $A && -n ${WAYLAND_DISPLAY:-} ]]; then
+    if ! "$A" query >/dev/null 2>&1; then
+      setsid -f "$A-daemon" >/dev/null 2>&1
+      for _ in $(seq 30); do "$A" query >/dev/null 2>&1 && break; sleep 0.1; done
+    fi
+    pkill -x swaybg 2>/dev/null
+    if [[ -n $img ]]; then
+      "$A" img "$img" --resize "$r" --fill-color "$BG" --transition-type "$WALL_TRANSITION" \
+        --transition-duration 0.8 --transition-fps 60 >/dev/null 2>&1 \
+      || "$A" img "$img" --resize "$r" --transition-type "$WALL_TRANSITION" >/dev/null 2>&1
+    else
+      "$A" clear "$BG" >/dev/null 2>&1
+    fi
+  else
+    old=$(pgrep -x swaybg || true)
+    if [[ -n $img ]]; then setsid -f swaybg -c "#$BG" -i "$img" -m "$m" >/dev/null 2>&1
+    else setsid -f swaybg -c "#$BG" >/dev/null 2>&1; fi
+    sleep 0.4; [[ -n $old ]] && kill $old 2>/dev/null
+  fi
+  return 0
+}
+
+theme_current() { # fondo del tema según su índice; $1 = avance (0/1/-1)
+  local imgs i idxf="$H/backgrounds/.idx-$t"
+  mapfile -t imgs < <(theme_imgs)
+  ((${#imgs[@]})) || { show ""; return; }
+  i=$(cat "$idxf" 2>/dev/null || echo 0); [[ $i =~ ^[0-9]+$ ]] || i=0
+  i=$(( (i + ${1:-0} + ${#imgs[@]}) % ${#imgs[@]} )); echo "$i" > "$idxf"
+  show "${imgs[$i]}"; CUR=${imgs[$i]}; POS="$((i + 1))/${#imgs[@]}"
+}
+
+step() { # $1 = +1 / -1 dentro de tu carpeta (o de los del tema)
+  if [[ $WALL_MODE == tema ]]; then theme_current "$1"; return; fi
+  local imgs i n=-1
+  mapfile -t imgs < <(my_imgs)
+  ((${#imgs[@]})) || { theme_current "$1"; return; }
+  for i in "${!imgs[@]}"; do [[ ${imgs[$i]} == "$WALL_FILE" ]] && { n=$i; break; }; done
+  ((n < 0 && $1 < 0)) && n=0   # si el actual no está en la carpeta: next → el primero, prev → el último
+  n=$(( (n + $1 + ${#imgs[@]}) % ${#imgs[@]} ))
+  setq WALL_MODE propio; setq WALL_FILE "${imgs[$n]}"
+  show "${imgs[$n]}"; CUR=${imgs[$n]}; POS="$((n + 1))/${#imgs[@]}"
+}
+
+pick() {
+  local imgs start
+  command -v imv >/dev/null || exec "$0" choose
+  mapfile -t imgs < <(my_imgs)
+  ((${#imgs[@]})) || exec "$0" choose
+  start=${imgs[0]}; [[ -n $WALL_FILE && -f $WALL_FILE ]] && printf '%s\n' "${imgs[@]}" | grep -qxF "$WALL_FILE" && start=$WALL_FILE
+  notify-send -t 5000 "Fondos" "← → mirar · Enter usar · Esc salir" 2>/dev/null
+  printf '%s\n' "${imgs[@]}" | imv -n "$start" \
+    -c "set title_text HYPRIX · Fondos — \$imv_current_file" \
+    -c "bind <Return> exec $BIN/hyprix-bg set \"\$imv_current_file\"" \
+    -c "bind <Escape> quit" -
+}
+
+case "${1:-}" in
+  set)
+    f=$(realpath -e -- "${2:-}" 2>/dev/null) || { notify-send "Fondo" "No encuentro el archivo"; exit 1; }
+    [[ $f =~ $EXT ]] || [[ ${f,,} =~ $EXT ]] || { notify-send "Fondo" "No es una imagen: $(basename "$f")"; exit 1; }
+    setq WALL_MODE propio; setq WALL_FILE "$f"
+    show "$f"; notify-send -t 1500 -i "$f" "Fondo de pantalla" "$(basename "$f")" 2>/dev/null ;;
+  pick)   pick ;;
+  choose)
+    if command -v zenity >/dev/null; then
+      f=$(zenity --file-selection --title="Elegí un fondo de pantalla" --filename="$WALL_DIR/" \
+            --file-filter="Imágenes | *.jpg *.jpeg *.png *.webp *.bmp *.JPG *.JPEG *.PNG *.WEBP" 2>/dev/null) || exit 0
+    else
+      f=$(find -L "$HOME" -maxdepth 4 -type f -regextype posix-extended -iregex "$EXT" -not -path '*/.cache/*' 2>/dev/null \
+          | sed "s|^$HOME|~|" | sort | fuzzel --dmenu --prompt "Imagen › " --width 70) || exit 0
+      f=${f/#\~/$HOME}
+    fi
+    [[ -n $f ]] && exec "$0" set "$f" ;;
+  next|next-quiet|prev)
+    d=1; [[ $1 == prev ]] && d=-1
+    CUR=""; POS=""; step "$d"
+    [[ $1 != next-quiet && -n $CUR ]] && notify-send -t 1500 "Fondo $POS" "$(basename "$CUR")" 2>/dev/null ;;
+  theme)  setq WALL_MODE tema; theme_current 0; notify-send -t 1500 "Fondo" "Fondos del tema (cambian con el tema)" 2>/dev/null ;;
+  color)  setq WALL_MODE color; show "" ;;
+  "")
+    case $WALL_MODE in
+      propio) if [[ -f $WALL_FILE ]]; then show "$WALL_FILE"; else theme_current 0; fi ;;
+      color)  show "" ;;
+      *)      theme_current 0 ;;
+    esac ;;
+  *) sed -n '2,10p' "$0"; exit 1 ;;
+esac

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# OSD de volumen / brillo / luz de teclado.
+# Con swayosd: indicador centrado tipo macOS. Si no, una sola notificación que se actualiza.
+export LC_NUMERIC=C
+IDF="${XDG_RUNTIME_DIR:-/tmp}/hyprix-osd.id"
+KBD=""   # smc::kbd_backlight (Mac), tpacpi::kbd_backlight (ThinkPad)…
+for l in /sys/class/leds/*kbd_backlight*; do [[ -e $l ]] && { KBD=${l##*/}; break; }; done
+OSD=0; command -v swayosd-client >/dev/null && pgrep -x swayosd-server >/dev/null && OSD=1
+
+notify() { # $1 título  $2 valor — reemplaza siempre la misma notificación
+  local id new args=()
+  id=$(cat "$IDF" 2>/dev/null)
+  [[ $id =~ ^[0-9]+$ ]] && ((id > 0)) && args=(-r "$id")
+  new=$(notify-send -p "${args[@]}" -a hyprix-osd -t 1200 \
+        -h "int:value:$2" -h string:x-canonical-private-synchronous:hyprix-osd \
+        "$1" "$2%" 2>/dev/null) && [[ $new =~ ^[0-9]+$ ]] && echo "$new" > "$IDF"
+}
+pct() { brightnessctl "$@" -m | cut -d, -f4 | tr -d '%'; }
+
+if ((OSD)); then
+  case "$1:$2" in
+    vol:up)   exec swayosd-client --output-volume raise ;;
+    vol:down) exec swayosd-client --output-volume lower ;;
+    vol:mute) exec swayosd-client --output-volume mute-toggle ;;
+    bri:up)   exec swayosd-client --brightness raise ;;
+    bri:down) exec swayosd-client --brightness lower ;;
+  esac
+fi
+
+case "$1:$2" in
+  vol:up)   wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ ;;
+  vol:down) wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
+  vol:mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+  bri:up)   brightnessctl -q set 5%+ ;;
+  bri:down) brightnessctl -q set 5%- ;;
+  kbd:up)   [[ -n $KBD ]] && brightnessctl -q -d "$KBD" set 10%+ ;;
+  kbd:down) [[ -n $KBD ]] && brightnessctl -q -d "$KBD" set 10%- ;;
+esac
+
+case "$1" in
+  vol) out=$(wpctl get-volume @DEFAULT_AUDIO_SINK@)
+       v=$(awk '{printf "%d", $2*100}' <<<"$out")
+       if [[ $out == *MUTED* ]]; then notify "Volumen (mute)" 0; else notify "Volumen" "$v"; fi ;;
+  bri) notify "Brillo" "$(pct)" ;;
+  kbd) [[ -n $KBD ]] && notify "Teclado" "$(pct -d "$KBD")" ;;
+esac

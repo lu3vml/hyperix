@@ -1,0 +1,4 @@
+#!/bin/sh
+# Nautilus: click derecho en una imagen → Scripts → Usar como fondo de pantalla
+f=$(printf '%s\n' "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" | head -n1)
+[ -n "$f" ] && exec "$HOME/.local/bin/hyprix-bg" set "$f"

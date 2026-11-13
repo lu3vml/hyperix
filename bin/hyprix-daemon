@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Daemon liviano de HYPRIX (cada 60 s): batería, horario de luz nocturna y rotación de fondos
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/hyprix-daemon.lock"
+flock -n 9 || exit 0   # una sola instancia
+
+H="$HOME/.config/hyprix"
+BAT=""; for b in /sys/class/power_supply/BAT*; do [[ -e $b ]] && { BAT=$b; break; }; done
+STAMP="${XDG_RUNTIME_DIR:-/tmp}/hyprix-wall.stamp"; touch "$STAMP"
+warned_low=0; warned_crit=0
+
+while true; do
+  BAT_LOW=15; BAT_CRIT=5; BAT_SUSPEND=3; WALL_ROTATE=0
+  # shellcheck disable=SC1091
+  [[ -f "$H/hyprix.conf" ]] && source "$H/hyprix.conf"
+  # shellcheck disable=SC1091
+  [[ -f "$H/settings.conf" ]] && source "$H/settings.conf"
+
+  if [[ -n $BAT ]]; then
+    cap=$(<"$BAT/capacity"); st=$(<"$BAT/status")
+    if [[ $st == Discharging ]]; then
+      if (( cap <= BAT_SUSPEND )); then
+        notify-send -u critical "Batería ${cap}%" "Suspendo en 30 segundos. Enchufá el cargador."
+        sleep 30
+        [[ $(<"$BAT/status") == Discharging ]] && systemctl suspend
+      elif (( cap <= BAT_CRIT && ! warned_crit )); then
+        notify-send -u critical "Batería crítica: ${cap}%" "A los ${BAT_SUSPEND}% se suspende sola."
+        warned_crit=1; warned_low=1
+      elif (( cap <= BAT_LOW && ! warned_low )); then
+        notify-send "Batería baja: ${cap}%" "Conviene enchufar el cargador."
+        warned_low=1
+      fi
+    else
+      warned_low=0; warned_crit=0
+    fi
+  fi
+
+  "$HOME/.local/bin/hyprix-nightlight" apply
+
+  # rotación automática de fondos
+  if (( WALL_ROTATE > 0 )) && (( $(date +%s) - $(stat -c %Y "$STAMP") >= WALL_ROTATE * 60 )); then
+    "$HOME/.local/bin/hyprix-bg" next-quiet; touch "$STAMP"
+  fi
+  sleep 60
+done

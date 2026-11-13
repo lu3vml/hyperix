@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# hyprix-icons COLOR — arma el tema de íconos "HYPRIX": Papirus-Dark con las
+# carpetas del color pedido (blue, indigo, nordic, violet, green, paleorange…).
+# Va en ~/.local/share/icons, no necesita sudo y tarda menos de un segundo.
+set -uo pipefail
+color=${1:-blue}
+SRC=${HYPRIX_PAPIRUS:-/usr/share/icons/Papirus}
+DST="$HOME/.local/share/icons/HYPRIX"
+[[ -f "$SRC/index.theme" ]] || { echo "Papirus no está instalado"; exit 0; }
+
+def=$(basename "$(readlink "$SRC/48x48/places/folder.svg")" .svg); def=${def#folder-}
+[[ -n $def ]] || def=blue
+if [[ ! -e "$SRC/48x48/places/folder-$color.svg" ]]; then
+  echo "Color de carpeta no disponible: $color (uso $def)"; color=$def
+fi
+
+tmp="$DST.tmp.$$"; rm -rf "$tmp"; mkdir -p "$tmp"
+python3 - "$SRC/index.theme" "$tmp/index.theme" <<'PY'
+import sys, configparser
+cp = configparser.RawConfigParser(strict=False, interpolation=None); cp.optionxform = str
+cp.read(sys.argv[1], encoding="utf-8")
+secs = [s for s in cp.sections() if s.endswith("/places")]
+with open(sys.argv[2], "w") as f:
+    f.write("[Icon Theme]\nName=HYPRIX\nComment=Papirus-Dark con carpetas del color del tema\n")
+    f.write("Inherits=Papirus-Dark,Papirus,Adwaita,hicolor\n")
+    f.write("Directories=" + ",".join(secs) + "\n\n")
+    for s in secs:
+        f.write(f"[{s}]\n" + "".join(f"{k}={v}\n" for k, v in cp.items(s)) + "\n")
+PY
+
+n=0
+while IFS= read -r d; do
+  mkdir -p "$tmp/$d"
+  # nombre -> destino de cada enlace de carpeta del color por defecto
+  while read -r name target; do
+    [[ $target =~ ^(folder|user)-$def(-[^/]*)?\.svg$ ]] || continue
+    new=${target/-$def/-$color}
+    [[ -e "$SRC/$d/$new" ]] || continue
+    ln -s "$SRC/$d/$new" "$tmp/$d/$name"; n=$((n + 1))
+  done < <(find "$SRC/$d" -maxdepth 1 -type l -printf '%f %l\n')
+done < <(cd "$SRC" && find . -mindepth 2 -maxdepth 2 -type d -name places -printf '%P\n' | sort)
+
+rm -rf "$DST"; mv "$tmp" "$DST"
+gtk-update-icon-cache -qf "$DST" 2>/dev/null || true
+echo "Íconos HYPRIX: carpetas $color ($n enlaces)"

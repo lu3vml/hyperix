@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# hyprix-wifi — selector de redes WiFi (NetworkManager) con fuzzel
+fz() { fuzzel --dmenu "$@"; }
+bars() { local s=$1; if ((s>75)); then echo "▂▄▆█"; elif ((s>50)); then echo "▂▄▆ "; elif ((s>25)); then echo "▂▄  "; else echo "▂   "; fi; }
+
+state=$(nmcli radio wifi)
+if [[ $state != enabled ]]; then
+  [[ $(printf '%s\n' "Encender WiFi" "Cancelar" | fz --prompt "WiFi apagado › " --lines 2) == "Encender WiFi" ]] || exit 0
+  nmcli radio wifi on; sleep 3
+fi
+
+notify-send -t 1500 "WiFi" "Buscando redes…"
+declare -A SEEN
+lines=()
+while IFS=: read -r inuse signal sec ssid; do
+  [[ -z $ssid || -n ${SEEN[$ssid]:-} ]] && continue
+  SEEN[$ssid]=1
+  lock=""; [[ -n $sec && $sec != "--" ]] && lock=" "
+  mark="  "; [[ $inuse == "*" ]] && mark="✔ "
+  lines+=("$mark$(bars "$signal") $(printf '%3s' "$signal")%  $ssid$lock")
+done < <(nmcli -t --escape no -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan yes 2>/dev/null)
+
+sel=$( { printf '%s\n' "${lines[@]}"; printf '%s\n' "── Apagar WiFi" "── Avanzado (nmtui)"; } \
+       | fz --prompt "WiFi › " --width 50 --lines 14) || exit 0
+case "$sel" in
+  "── Apagar WiFi")      nmcli radio wifi off; notify-send "WiFi" "Apagado"; exit 0 ;;
+  "── Avanzado (nmtui)") exec foot --app-id=hyprix-float -e nmtui ;;
+esac
+
+ssid=$(sed -E 's/^(✔ |  )[^%]*%  //' <<<"$sel"); ssid=${ssid% }
+[[ -n $ssid ]] || exit 0
+
+if [[ $sel == "✔ "* ]]; then
+  [[ $(printf '%s\n' "Desconectar" "Cancelar" | fz --prompt "$ssid › " --lines 2) == Desconectar ]] \
+    && nmcli con down id "$ssid" >/dev/null && notify-send "WiFi" "Desconectado de $ssid"
+  exit 0
+fi
+
+if nmcli -t -f NAME con show | grep -Fxq -- "$ssid"; then
+  out=$(nmcli con up id "$ssid" 2>&1)
+elif [[ $sel == *""* ]]; then
+  pass=$(fz --password --prompt "Clave de $ssid › " --lines 0) || exit 0
+  out=$(nmcli dev wifi connect "$ssid" password "$pass" 2>&1)
+else
+  out=$(nmcli dev wifi connect "$ssid" 2>&1)
+fi
+if [[ $? -eq 0 ]]; then notify-send "WiFi" "Conectado a $ssid"
+else notify-send -u critical "WiFi" "No pude conectar a $ssid\n${out##*Error: }"; fi

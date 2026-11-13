@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# hyprix-tui wifi|bt|audio — abre la TUI disponible en una ventana flotante
+pop() { exec foot --app-id=hyprix-float -e "$@"; }
+case "${1:-}" in
+  wifi)  exec ~/.local/bin/hyprix-wifi ;;
+  bt)    command -v bluetui  >/dev/null && pop bluetui;  exec blueman-manager ;;
+  audio) command -v wiremix  >/dev/null && pop wiremix
+         command -v pulsemixer >/dev/null && pop pulsemixer; exec pavucontrol ;;
+  *) echo "uso: hyprix-tui wifi|bt|audio"; exit 1 ;;
+esac

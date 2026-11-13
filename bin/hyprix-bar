@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# hyprix-bar start|restart|stop|log — Waybar como servicio de systemd --user:
+# si se cae, systemd la levanta sola en 1 s; si se traba, Super+Shift+B.
+U=hyprix-waybar.service
+UF="$HOME/.config/systemd/user/$U"
+if [[ ! -f $UF ]]; then
+  mkdir -p "$(dirname "$UF")"
+  cat > "$UF" <<'EOF'
+[Unit]
+Description=Waybar (HYPRIX)
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+ExecStart=/usr/bin/waybar
+Restart=always
+RestartSec=1
+EOF
+  systemctl --user daemon-reload
+fi
+# Desde SSH/tty no hay WAYLAND_DISPLAY: se re-lanza dentro de la sesión de Hyprland
+if [[ -z ${WAYLAND_DISPLAY:-} && ${1:-restart} =~ ^(start|restart)$ ]] && hyprctl -i 0 version >/dev/null 2>&1; then
+  exec hyprctl -i 0 dispatch exec "$0 ${1:-restart}" >/dev/null
+fi
+case "${1:-restart}" in
+  start|restart)
+    systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE \
+      XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_RUNTIME_DIR PATH LANG 2>/dev/null
+    systemctl --user stop "$U" 2>/dev/null
+    pkill -x waybar 2>/dev/null; sleep 0.2      # instancias sueltas de antes
+    systemctl --user reset-failed "$U" 2>/dev/null
+    systemctl --user start "$U" ;;
+  stop) systemctl --user stop "$U" ;;
+  log)  journalctl --user -u "$U" -n "${2:-80}" --no-pager ;;
+  *) echo "uso: hyprix-bar start|restart|stop|log"; exit 1 ;;
+esac

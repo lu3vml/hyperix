@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Luz nocturna.
+#   hyprix-nightlight toggle         prende/apaga (Super+Ctrl+N)
+#   hyprix-nightlight auto|on|off    fija el modo
+#   hyprix-nightlight apply          aplica según modo/horario (lo llama el daemon)
+#   hyprix-nightlight status         JSON para Waybar
+H="$HOME/.config/hyprix"; MODEF="$H/nightlight-mode"
+NL_START=20:30; NL_END=07:00; NL_TEMP=4000
+# shellcheck disable=SC1091
+[[ -f "$H/hyprix.conf" ]] && source "$H/hyprix.conf"
+mode=$(cat "$MODEF" 2>/dev/null || echo auto)
+
+in_window() {
+  local n s e
+  n=$((10#$(date +%H%M))); s=$((10#${NL_START/:/})); e=$((10#${NL_END/:/}))
+  if (( s < e )); then (( n >= s && n < e )); else (( n >= s || n < e )); fi
+}
+want()    { case $mode in on) return 0 ;; off) return 1 ;; *) in_window ;; esac; }
+running() { pgrep -x hyprsunset >/dev/null || pgrep -x gammastep >/dev/null; }
+start() {
+  if command -v hyprsunset >/dev/null; then setsid -f hyprsunset -t "$NL_TEMP" >/dev/null 2>&1
+  else setsid -f gammastep -P -O "$NL_TEMP" >/dev/null 2>&1; fi
+}
+stop()    { pkill -x hyprsunset; pkill -x gammastep; return 0; }
+refresh() { pkill -RTMIN+9 -x waybar 2>/dev/null || true; }
+apply()   { # $1=force: refresca la barra aunque no cambie el estado
+  local was=0 now=0
+  running && was=1
+  if want; then now=1; running || start; else running && stop; fi
+  { ((was != now)) || [[ ${1:-} == force ]]; } && refresh
+  return 0
+}
+setmode() { mode=$1; echo "$1" > "$MODEF"; apply force; }
+label()   { case $mode in on) echo "encendida" ;; off) echo "apagada" ;; *) echo "automática ($NL_START → $NL_END)" ;; esac; }
+
+case "${1:-status}" in
+  apply) apply "${2:-}" ;;
+  on|off|auto)
+    setmode "$1"; notify-send -t 1500 "Luz nocturna" "$(label)" 2>/dev/null || true ;;
+  toggle)
+    if running; then setmode off; else setmode on; fi
+    notify-send -t 1500 "Luz nocturna" "$(label)" 2>/dev/null || true ;;
+  status)
+    if running; then cls=on; st="activa"; else cls=off; st="inactiva"; fi
+    printf '{"text":"%s","class":"%s","tooltip":"Luz nocturna %s\\nModo: %s\\nClick: prender/apagar"}\n' \
+      $'' "$cls" "$st" "$(label)" ;;
+esac

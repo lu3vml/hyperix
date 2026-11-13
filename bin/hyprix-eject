@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# hyprix-eject — elegir un pendrive/disco montado y expulsarlo de forma segura
+mapfile -t mnts < <(findmnt -rn -o TARGET | grep -E "^/media/$USER/|^/run/media/$USER/")
+if ((${#mnts[@]} == 0)); then notify-send "Expulsar" "No hay dispositivos externos montados"; exit 0; fi
+sel=$(printf '%s\n' "${mnts[@]}" | sed "s|.*/||" | fuzzel --dmenu --prompt "Expulsar › " --lines 6) || exit 0
+[[ -n $sel ]] || exit 0
+for m in "${mnts[@]}"; do [[ ${m##*/} == "$sel" ]] && target=$m; done
+if out=$(udiskie-umount --detach "$target" 2>&1); then
+  notify-send "Expulsar" "Podés desenchufar «$sel»"
+else
+  notify-send -u critical "Expulsar" "No se pudo expulsar «$sel» (¿hay archivos abiertos?)\n${out##*: }"
+fi

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# hyprix-update — actualiza HYPRIX desde tu repo de GitHub
+#   hyprix-update            baja lo nuevo y lo aplica (te muestra qué cambió)
+#   hyprix-update --check    sólo avisa si hay algo nuevo
+#   hyprix-update --volver   vuelve a la versión anterior a la última actualización
+#   hyprix-update --aplicar  reaplica la versión que ya tenés (sin bajar nada)
+#   hyprix-update --version  versión instalada
+# Tus ajustes (Super+Coma), tu fondo y user.conf no se tocan.
+set -uo pipefail
+H="$HOME/.config/hyprix"; STATE="$HOME/.local/state/hyprix"
+REPO=$(cat "$H/repo-path" 2>/dev/null || echo "$HOME/.local/share/hyprix")
+c_ok=$'\e[32m'; c_wr=$'\e[33m'; c_in=$'\e[36m'; c_0=$'\e[0m'
+die() { echo "${c_wr}  ✘ $*${c_0}"; exit 1; }
+[[ -d $REPO/.git ]] || die "No encuentro el repo de HYPRIX en $REPO"
+cd "$REPO" || exit 1
+mkdir -p "$STATE"
+
+aplicar() {
+  echo "${c_in}==> Aplicando${c_0}"
+  bash "$REPO/lib/deploy.sh"
+  # paquetes nuevos que pida esta versión
+  local want=() p
+  for p in $(grep -v '^#' "$REPO/lib/packages.txt"); do
+    dpkg -s "$p" >/dev/null 2>&1 && continue
+    apt-cache show "$p" >/dev/null 2>&1 && want+=("$p")
+  done
+  if ((${#want[@]})); then
+    echo "  Paquetes nuevos: ${want[*]}"
+    sudo apt-get install -y -t trixie-backports "${want[@]}" 2>/dev/null || sudo apt-get install -y "${want[@]}"
+  fi
+  "$HOME/.local/bin/hyprix-config" --apply >/dev/null
+  if hyprctl -i 0 version >/dev/null 2>&1; then
+    hyprctl -i 0 reload >/dev/null
+    pkill -f '/hyprix-daemon$' 2>/dev/null; hyprctl -i 0 dispatch exec "$HOME/.local/bin/hyprix-daemon" >/dev/null
+    errs=$(hyprctl -i 0 configerrors 2>/dev/null | grep -v '^$' || true)
+    [[ -n $errs ]] && { echo "${c_wr}  ! Errores de config:${c_0}"; echo "$errs"; }
+  fi
+  echo "${c_ok}  ✔ HYPRIX $(cat VERSION) · $(git log -1 --format='%h %cd' --date=short)${c_0}"
+  notify-send "HYPRIX" "Actualizado a $(cat VERSION)" 2>/dev/null || true
+}
+
+case "${1:-}" in
+  --version|-v)
+    echo "HYPRIX $(cat VERSION) · $(git log -1 --format='%h del %cd' --date=short) · $REPO" ;;
+  --check)
+    git fetch -q 2>/dev/null || die "No pude conectarme a GitHub"
+    n=$(git rev-list --count "HEAD..@{u}" 2>/dev/null || echo 0)
+    if ((n)); then echo "Hay $n cambio(s) nuevo(s):"; git log --format='  · %s' "HEAD..@{u}"; exit 10
+    else echo "Estás al día ($(cat VERSION))."; fi ;;
+  --aplicar) aplicar ;;
+  --volver)
+    prev=$(cat "$STATE/prev-commit" 2>/dev/null) || die "No hay una versión anterior guardada"
+    echo "${c_in}==> Volviendo a $(git log -1 --format='%h (%cd)' --date=short "$prev")${c_0}"
+    git reset -q --hard "$prev" || die "No pude volver"
+    aplicar
+    echo "  Para volver a lo último: hyprix-update" ;;
+  "")
+    echo "${c_in}==> Buscando novedades${c_0}"
+    git fetch -q 2>/dev/null || die "No pude conectarme a GitHub"
+    n=$(git rev-list --count "HEAD..@{u}" 2>/dev/null || echo 0)
+    if ((n == 0)); then echo "  Ya estás al día ($(cat VERSION))."; exit 0; fi
+    echo "  $n cambio(s):"; git log --format='    · %s' "HEAD..@{u}"
+    if [[ -n $(git status --porcelain) ]]; then
+      echo "${c_wr}  ! Tenés cambios locales en el repo; los guardo aparte (git stash)${c_0}"
+      git stash push -q -m "hyprix-update $(date +%F_%T)"
+    fi
+    git rev-parse HEAD > "$STATE/prev-commit"
+    git pull -q --ff-only || die "No pude actualizar (¿el repo divergió?). Revisá con: cd $REPO && git status"
+    aplicar ;;
+  *) sed -n '2,8p' "$0"; exit 1 ;;
+esac

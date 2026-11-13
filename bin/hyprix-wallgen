@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Genera fondos para cada tema a partir de su paleta.
+#   hyprix-wallgen            genera los que falten
+#   hyprix-wallgen --force    regenera todos (por ej. si cambiás de monitor)
+set -euo pipefail
+H="$HOME/.config/hyprix"
+IM=$(command -v magick || command -v convert) || { echo "Falta imagemagick"; exit 1; }
+FORCE=0; [[ ${1:-} == --force ]] && FORCE=1
+
+# Resolución del monitor (si Hyprland está corriendo), si no 1440x900
+res=$(hyprctl -i 0 monitors 2>/dev/null | awk '/^[[:space:]]+[0-9]+x[0-9]+@/ {split($1,a,"@"); print a[1]; exit}' || true)
+W=${res%x*}; Hh=${res#*x}
+[[ $W =~ ^[0-9]+$ && $Hh =~ ^[0-9]+$ ]] || { W=1440; Hh=900; }
+
+for tf in "$H"/themes/*.theme; do
+  t=$(basename "$tf" .theme); out="$H/backgrounds/$t"; mkdir -p "$out"
+  if (( ! FORCE )) && compgen -G "$out/hyprix-*" >/dev/null; then continue; fi
+  # shellcheck disable=SC1090
+  source "$tf"
+  echo "  · $t (${W}x${Hh})"
+  R=$((W * 14 / 10))
+
+  # 1 — Resplandor: acento abajo a la derecha, secundario arriba a la izquierda
+  "$IM" -size ${W}x${Hh} xc:"#$BG" \
+    \( -size ${R}x${R} -define gradient:extent=Minimum radial-gradient:"#${ACCENT}"-black -evaluate multiply 0.42 \) \
+    -gravity northwest -geometry +$((W - R/2))+$((Hh - R/2)) -compose screen -composite \
+    \( -size ${R}x${R} -define gradient:extent=Minimum radial-gradient:"#${C5}"-black -evaluate multiply 0.22 \) \
+    -geometry -$((R/2))-$((R/2)) -compose screen -composite \
+    -attenuate 0.15 +noise Gaussian -depth 8 -quality 92 "$out/hyprix-1-resplandor.jpg"
+
+  # 2 — Grilla de puntos con viñeta
+  "$IM" -size 24x24 xc:"#$BG" -fill "#${MUTED}" -draw "circle 12,12 12.9,12.9" -write mpr:dot +delete \
+    -size ${W}x${Hh} tile:mpr:dot \
+    \( -size ${W}x${Hh} radial-gradient:none-"#${BG}" \) -compose over -composite \
+    -depth 8 "$out/hyprix-2-grilla.png"
+
+  # 3 — Horizonte: brillo inferior, línea de acento y scanlines tipo CRT
+  HZ=$((Hh * 62 / 100))
+  "$IM" -size ${W}x${Hh} xc:"#$BG" \
+    \( -size ${W}x$((Hh - HZ)) gradient:"#${ACCENT}"-"#${BG}" \) -gravity south -compose blend -define compose:args=30 -composite \
+    \( -size ${W}x2 xc:"#${ACCENT}" \) -gravity northwest -geometry +0+${HZ} -compose over -composite \
+    \( -size 1x3 xc:white -fill gray82 -draw "point 0,2" -write mpr:sl +delete -size ${W}x${Hh} tile:mpr:sl \) \
+    -compose multiply -composite -depth 8 "$out/hyprix-3-horizonte.png"
+done
+echo "Fondos listos. Podés sumar tus imágenes en ~/.config/hyprix/backgrounds/<tema>/"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Lista los atajos comentados de bindings.conf
+grep -E '^\s*bind[a-z]*\s*=.*#' "$HOME/.config/hypr/bindings.conf" \
+| sed -E 's/^\s*bind[a-z]*\s*=\s*//; s/\$mod/SUPER/g' \
+| awk -F'#' '{
+    split($1, a, ",");
+    gsub(/^ +| +$/, "", a[1]); gsub(/^ +| +$/, "", a[2]); gsub(/^ +| +$/, "", $2);
+    k = (a[1] == "" ? a[2] : a[1] " + " a[2]);
+    printf "%-26s %s\n", k, $2 }' \
+| fuzzel --dmenu --prompt "Atajos › " --width 64 --lines 20 >/dev/null

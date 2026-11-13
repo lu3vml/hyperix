@@ -1,0 +1,107 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 26,
+  "spacing": 0,
+  "modules-left": ["custom/menu", "hyprland/workspaces"],
+  "modules-center": ["clock", "custom/weather"],
+  "modules-right": ["tray", "custom/updates", "custom/vpn", "custom/nightlight", "cpu", "temperature", "memory", "network", "bluetooth", "pulseaudio", "backlight", "battery", "custom/power"],
+
+  "custom/menu": {
+    "format": "",
+    "on-click": "~/.local/bin/hyprix-menu",
+    "tooltip": false
+  },
+  "hyprland/workspaces": {
+    "format": "{name}",
+    "on-click": "activate",
+    "persistent-workspaces": { "*": 5 }
+  },
+  "clock": {
+    "format": "{:%a %d %b  %H:%M}",
+    "tooltip-format": "<tt>{calendar}</tt>"
+  },
+  "custom/weather": {
+    "exec": "~/.local/bin/hyprix-weather",
+    "return-type": "json",
+    "interval": 900,
+    "on-click": "xdg-open https://wttr.in/"
+  },
+  "tray": { "spacing": 8 },
+  "custom/updates": {
+    "exec": "~/.local/bin/hyprix-updates",
+    "return-type": "json",
+    "interval": 3600,
+    "signal": 8,
+    "on-click": "foot --app-id=hyprix-float -e bash -c 'sudo apt update && sudo apt full-upgrade; pkill -RTMIN+8 waybar; echo; read -rp \"Enter para cerrar\"'"
+  },
+  "custom/vpn": {
+    "exec": "~/.local/bin/hyprix-vpn",
+    "return-type": "json",
+    "interval": 10
+  },
+  "custom/nightlight": {
+    "exec": "~/.local/bin/hyprix-nightlight status",
+    "return-type": "json",
+    "interval": 60,
+    "signal": 9,
+    "on-click": "~/.local/bin/hyprix-nightlight toggle"
+  },
+  "cpu": {
+    "format": " {usage}%",
+    "interval": 5,
+    "on-click": "foot -e btop"
+  },
+  "temperature": {
+    "hwmon-path-abs": "/sys/devices/platform/coretemp.0/hwmon",
+    "input-filename": "temp1_input",
+    "critical-threshold": 85,
+    "interval": 5,
+    "format": " {temperatureC}°",
+    "tooltip-format": "CPU {temperatureC} °C"
+  },
+  "memory": {
+    "format": " {percentage}%",
+    "interval": 10,
+    "tooltip-format": "RAM {used:0.1f} / {total:0.1f} GB · swap {swapUsed:0.1f} GB",
+    "on-click": "foot -e btop"
+  },
+  "network": {
+    "format-wifi": " {essid}",
+    "format-ethernet": " cable",
+    "format-disconnected": " off",
+    "tooltip-format": "{ifname} {ipaddr} ({signalStrength}%)",
+    "on-click": "~/.local/bin/hyprix-tui wifi"
+  },
+  "bluetooth": {
+    "format": "",
+    "format-disabled": " off",
+    "format-connected": " {num_connections}",
+    "on-click": "~/.local/bin/hyprix-tui bt"
+  },
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": " mute",
+    "format-icons": { "default": ["", "", ""] },
+    "on-click": "~/.local/bin/hyprix-tui audio",
+    "scroll-step": 5
+  },
+  "backlight": {
+    "format": " {percent}%",
+    "on-scroll-up": "brightnessctl set 5%+",
+    "on-scroll-down": "brightnessctl set 5%-"
+  },
+  "battery": {
+    "states": { "warning": 25, "critical": 10 },
+    "format": "{icon} {capacity}%",
+    "format-charging": " {capacity}%",
+    "format-plugged": " {capacity}%",
+    "format-icons": ["", "", "", "", ""],
+    "tooltip-format": "{timeTo} · {power:.1f} W"
+  },
+  "custom/power": {
+    "format": "",
+    "on-click": "~/.local/bin/hyprix-menu power",
+    "tooltip": false
+  }
+}

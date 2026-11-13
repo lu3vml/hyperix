@@ -1,0 +1,5 @@
+NAME="Dracula"
+GNOME_ACCENT=purple THEME_FOLDERS=violet
+BG=282a36 FG=f8f8f2 ACCENT=bd93f9 MUTED=6272a4 URGENT=ff5555 WARN=ffb86c
+C0=21222c C1=ff5555 C2=50fa7b C3=f1fa8c C4=bd93f9 C5=ff79c6 C6=8be9fd C7=f8f8f2
+C8=6272a4 C9=ff6e6e C10=69ff94 C11=ffffa5 C12=d6acff C13=ff92df C14=a4ffff C15=ffffff

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Menú HYPRIX (Super+Alt+Espacio) y menú de energía (Super+Esc)
+pick() { local p=$1; shift; printf '%s\n' "$@" | fuzzel --dmenu --prompt "$p › "; }
+popup() { foot --app-id=hyprix-float "$@"; }
+
+power() {
+  case "$(pick Energía Bloquear Suspender "Cerrar sesión" Reiniciar Apagar)" in
+    Bloquear)        loginctl lock-session ;;
+    Suspender)       systemctl suspend ;;
+    "Cerrar sesión") hyprctl dispatch exit ;;
+    Reiniciar)       systemctl reboot ;;
+    Apagar)          systemctl poweroff ;;
+  esac
+}
+
+case "${1:-main}" in
+  power) power ;;
+  *)
+    case "$(pick HYPRIX Configuración Temas "Elegir fondo" "Fondo siguiente" "Bajar fondos" "Luz nocturna" "Red WiFi" Bluetooth Audio "Perfil de energía" Atajos "Expulsar dispositivo" "Reiniciar barra" "Actualizar HYPRIX" "Actualizar sistema" "Editar config" Energía)" in
+      Configuración)     ~/.local/bin/hyprix-config ;;
+      Temas)             ~/.local/bin/hyprix-theme --menu ;;
+      "Elegir fondo")    ~/.local/bin/hyprix-bg pick ;;
+      "Fondo siguiente") ~/.local/bin/hyprix-bg next ;;
+      "Bajar fondos")    foot --app-id=hyprix-float -e bash -c '~/.local/bin/hyprix-walls; read -rp "Enter para cerrar"' ;;
+      "Luz nocturna")
+        case "$(pick "Luz nocturna" "Automática (horario)" Encendida Apagada)" in
+          "Automática (horario)") ~/.local/bin/hyprix-nightlight auto ;;
+          Encendida)              ~/.local/bin/hyprix-nightlight on ;;
+          Apagada)                ~/.local/bin/hyprix-nightlight off ;;
+        esac ;;
+      "Red WiFi")        ~/.local/bin/hyprix-tui wifi ;;
+      Bluetooth)         ~/.local/bin/hyprix-tui bt ;;
+      Audio)             ~/.local/bin/hyprix-tui audio ;;
+      "Perfil de energía")
+        p=$(pick Perfil power-saver balanced performance) && [[ -n $p ]] && \
+          powerprofilesctl set "$p" && notify-send "Energía" "Perfil: $p" ;;
+      Atajos)            ~/.local/bin/hyprix-keys ;;
+      "Expulsar dispositivo") ~/.local/bin/hyprix-eject ;;
+      "Reiniciar barra")  ~/.local/bin/hyprix-bar restart ;;
+      "Actualizar HYPRIX")  popup -e bash -c '~/.local/bin/hyprix-update; echo; read -rp "Enter para cerrar"' ;;
+      "Actualizar sistema") popup -e bash -c 'sudo apt update && sudo apt full-upgrade; echo; read -rp "Enter para cerrar"' ;;
+      "Editar config")   popup -e nano ~/.config/hypr/user.conf ;;
+      Energía)           power ;;
+    esac ;;
+esac

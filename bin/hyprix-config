@@ -1,0 +1,669 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034,SC1090,SC2088
+# hyprix-config — panel de configuración de HYPRIX (Super+Coma)
+#   hyprix-config                   menú por secciones
+#   hyprix-config --apply           regenera todo desde los archivos de ajustes
+#   hyprix-config --reset           vuelve a los valores por defecto
+#   hyprix-config --get CLAVE       muestra un valor
+#   hyprix-config --set CLAVE VALOR cambia un valor y lo aplica
+#   hyprix-config --setq CLAVE VALOR cambia un valor sin aplicar nada (para scripts)
+# Ajustes: ~/.config/hyprix/settings.conf (aspecto, barra, entrada, apps…)
+#          ~/.config/hyprix/hyprix.conf   (luz nocturna, batería, clima)
+set -uo pipefail
+export LC_NUMERIC=C
+H="$HOME/.config/hyprix"; S="$H/settings.conf"; G="$H/hyprix.conf"
+HY="$HOME/.config/hypr"; BIN="$HOME/.local/bin"
+
+DEFAULTS='# --- Aspecto ---
+FONT_MONO="JetBrainsMono Nerd Font"
+FONT_UI="Inter"
+SIZE_TERM="9.5"
+SIZE_BAR="11"
+SIZE_LAUNCHER="10"
+SIZE_UI="9"
+ALPHA_TERM="0.95"
+ALPHA_BAR="0.82"
+ALPHA_LAUNCHER="0.85"
+ALPHA_NOTIF="0.88"
+INACTIVE_OPACITY="0.94"
+BORDER="1"
+ROUNDING="0"
+GAPS_IN="4"
+GAPS_OUT="9"
+BLUR="on"
+BLUR_SIZE="4"
+SHADOW="on"
+ANIM="normal"
+CURSOR_THEME="auto"
+CURSOR_SIZE="24"
+# --- Barra ---
+BAR_POSITION="top"
+BAR_HEIGHT="26"
+BAR_CLOCK="%a %d %b  %H:%M"
+BAR_HIDE=""
+BAR_WORKSPACES="5"
+# --- Notificaciones ---
+NOTIF_POS="top-right"
+NOTIF_TIMEOUT="5000"
+# --- Fondos ---
+WALL_MODE="tema"          # propio = el que elegiste · tema = los del tema · color = liso
+WALL_FILE=""
+WALL_DIR=""               # vacío = ~/Imágenes/Fondos
+WALL_FILL="llenar"        # llenar | ajustar | centrar
+WALL_ROTATE="0"
+WALL_TRANSITION="fade"
+# --- Ventanas y entrada ---
+LAYOUT="dwindle"
+FOLLOW_MOUSE="1"
+KB_LAYOUT="auto"
+KB_VARIANT=""
+KB_CAPS_ESC="no"
+REPEAT_RATE="40"
+REPEAT_DELAY="250"
+NATURAL_SCROLL="true"
+SCROLL_FACTOR="0.5"
+TAP_TO_CLICK="true"
+SENSITIVITY="0"
+# --- Inactividad (segundos, 0 = nunca) ---
+IDLE_DIM="240"
+IDLE_LOCK="300"
+IDLE_DPMS="330"
+IDLE_SUSPEND="900"
+# --- Sistema ---
+USB_AUTOMOUNT="true"
+SHOT_DIR=""
+SHOT_EDIT="preguntar"
+APP_TERM_EDITOR="nano"'
+
+G_DEFAULTS='NL_START="20:30"
+NL_END="07:00"
+NL_TEMP="4000"
+BAT_LOW="15"
+BAT_CRIT="5"
+BAT_SUSPEND="3"
+WEATHER_CITY="Viedma"'
+
+load() { eval "$DEFAULTS"; eval "$G_DEFAULTS"; [[ -f $S ]] && source "$S"; [[ -f $G ]] && source "$G"; return 0; }
+
+# Agrega a los archivos las claves nuevas que falten (no toca las existentes)
+fill_missing() {
+  local f=$1 defs=$2 line k added=0
+  if [[ ! -s $f ]]; then { echo "# HYPRIX — ajustes (los edita hyprix-config / Super+Coma)"; echo "$defs"; } > "$f"; return 0; fi
+  while IFS= read -r line; do
+    [[ $line =~ ^([A-Z_0-9]+)= ]] || continue
+    k=${BASH_REMATCH[1]}
+    if ! grep -q "^$k=" "$f"; then
+      ((added)) || printf '\n# --- agregados por hyprix-config ---\n' >> "$f"
+      echo "$line" >> "$f"; added=1
+    fi
+  done <<<"$defs"
+}
+
+# set_key [archivo] CLAVE VALOR
+set_key() {
+  local f=$S; if (($# == 3)); then f=$1; shift; fi
+  local k=$1 v=$2
+  if [[ $v == *[\"\$\`\\]* ]]; then notify-send "Configuración" "Valor no válido: $v" 2>/dev/null; return 1; fi
+  [[ $G_DEFAULTS == *"$k="* ]] && f=$G
+  if grep -q "^$k=" "$f" 2>/dev/null; then
+    awk -v k="$k" -v line="$k=\"$v\"" '!d && index($0, k "=") == 1 { print line; d = 1; next } { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  else
+    echo "$k=\"$v\"" >> "$f"
+  fi
+}
+
+pick() { local p=$1; shift; if (($#)); then printf '%s\n' "$@"; else cat; fi | fuzzel --dmenu --prompt "$p › " --width 50; }
+ask_text() { fuzzel --dmenu --prompt "$1 › " --lines 0 --width 50 < /dev/null; }
+pct()  { awk -v a="$1" 'BEGIN { printf "%d%%", a * 100 + 0.5 }'; }
+mins() { if (($1 == 0)); then echo "nunca"; elif (($1 < 60)); then echo "$1 s"; else echo "$(($1 / 60)) min"; fi; }
+in_session() { hyprctl -i 0 version >/dev/null 2>&1; }
+restart_in_session() { in_session || return 0; pkill -x "$1" 2>/dev/null; hyprctl -i 0 dispatch exec "${2:-$1}" >/dev/null 2>&1; }
+
+# =============================================================================
+#  GENERADORES
+# =============================================================================
+render_look() {
+  local f=1 en=1 blur=false shadow=false ct=$CURSOR_THEME kbl kbv kbo=""
+  case $ANIM in rapidas) f=0.6 ;; lentas) f=1.6 ;; off) en=0 ;; esac
+  [[ $BLUR == on ]] && blur=true
+  [[ $SHADOW == on ]] && shadow=true
+  d() { awk -v b="$1" -v f="$f" 'BEGIN { printf "%.2f", b * f }'; }
+  if [[ $ct == auto ]]; then
+    ct=Adwaita
+    for c in Bibata-Modern-Classic Bibata-Modern-Ice; do
+      [[ -d "$HOME/.local/share/icons/$c/cursors" || -d "/usr/share/icons/$c/cursors" ]] && { ct=$c; break; }
+    done
+  fi
+  # teclado: "auto" = lo que se eligió al instalar Debian
+  if [[ $KB_LAYOUT == auto ]]; then
+    local XKBLAYOUT=us XKBVARIANT="" XKBOPTIONS=""
+    # shellcheck disable=SC1091
+    [[ -f /etc/default/keyboard ]] && . /etc/default/keyboard
+    kbl=$XKBLAYOUT; kbv=$XKBVARIANT; kbo=$XKBOPTIONS
+  else
+    kbl=$KB_LAYOUT; kbv=$KB_VARIANT
+  fi
+  [[ $KB_CAPS_ESC == yes ]] && kbo="${kbo:+$kbo,}caps:escape"
+
+  cat > "$HY/looknfeel.conf" <<EOF
+# =============================================================
+#  HYPRIX — GENERADO por hyprix-config: no editar a mano
+#  (cambios personales en ~/.config/hypr/user.conf)
+# =============================================================
+general {
+    gaps_in = $GAPS_IN
+    gaps_out = $GAPS_OUT
+    border_size = $BORDER
+    col.active_border = \$active
+    col.inactive_border = \$inactive
+    layout = $LAYOUT
+    resize_on_border = true
+}
+
+decoration {
+    rounding = $ROUNDING
+    active_opacity = 1.0
+    inactive_opacity = $INACTIVE_OPACITY
+
+    shadow {
+        enabled = $shadow
+        range = 14
+        render_power = 3
+        color = rgba(00000088)
+    }
+
+    blur {
+        enabled = $blur
+        size = $BLUR_SIZE
+        passes = 1
+        new_optimizations = true
+        vibrancy = 0.17
+    }
+}
+
+animations {
+    enabled = $en
+    bezier = easeOutQuint, 0.23, 1, 0.32, 1
+    bezier = easeInOutCubic, 0.65, 0.05, 0.36, 1
+    bezier = linear, 0, 0, 1, 1
+    bezier = almostLinear, 0.5, 0.5, 0.75, 1.0
+    bezier = quick, 0.15, 0, 0.1, 1
+
+    animation = global, 1, $(d 10), default
+    animation = border, 1, $(d 5.39), easeOutQuint
+    animation = windows, 1, $(d 4.79), easeOutQuint
+    animation = windowsIn, 1, $(d 4.1), easeOutQuint, popin 87%
+    animation = windowsOut, 1, $(d 1.49), linear, popin 87%
+    animation = fadeIn, 1, $(d 1.73), almostLinear
+    animation = fadeOut, 1, $(d 1.46), almostLinear
+    animation = fade, 1, $(d 3.03), quick
+    animation = layers, 1, $(d 3.81), easeOutQuint
+    animation = layersIn, 1, $(d 4), easeOutQuint, fade
+    animation = layersOut, 1, $(d 1.5), linear, fade
+    animation = fadeLayersIn, 1, $(d 1.79), almostLinear
+    animation = fadeLayersOut, 1, $(d 1.39), almostLinear
+    animation = workspaces, 1, $(d 1.94), almostLinear, fade
+}
+
+dwindle {
+    preserve_split = true
+}
+
+misc {
+    disable_hyprland_logo = true
+    disable_splash_rendering = true
+    force_default_wallpaper = 0
+}
+
+input {
+    kb_layout = $kbl
+    kb_variant = $kbv
+    kb_options = $kbo
+    follow_mouse = $FOLLOW_MOUSE
+    sensitivity = $SENSITIVITY
+    repeat_rate = $REPEAT_RATE
+    repeat_delay = $REPEAT_DELAY
+    touchpad {
+        natural_scroll = $NATURAL_SCROLL
+        scroll_factor = $SCROLL_FACTOR
+        tap-to-click = $TAP_TO_CLICK
+        clickfinger_behavior = true
+        disable_while_typing = true
+    }
+}
+
+env = XCURSOR_THEME,$ct
+env = XCURSOR_SIZE,$CURSOR_SIZE
+exec = hyprctl setcursor $ct $CURSOR_SIZE
+EOF
+  gsettings set org.gnome.desktop.interface cursor-theme "$ct" 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface cursor-size "$CURSOR_SIZE" 2>/dev/null || true
+  local g
+  for g in "$HOME/.config/gtk-3.0/settings.ini" "$HOME/.config/gtk-4.0/settings.ini"; do
+    [[ -f $g ]] && sed -i -e "s/^gtk-cursor-theme-name=.*/gtk-cursor-theme-name=$ct/" \
+                          -e "s/^gtk-cursor-theme-size=.*/gtk-cursor-theme-size=$CURSOR_SIZE/" "$g"
+  done
+  return 0
+}
+
+# Waybar: se arma desde la plantilla con los módulos, posición y reloj elegidos
+render_bar() {
+  local tpl="$H/templates/waybar.jsonc" out="$HOME/.config/waybar/config.jsonc"
+  [[ -f $tpl ]] || { [[ -f $out ]] && cp "$out" "$tpl"; }
+  [[ -f $tpl ]] || return 0
+  BAR_POSITION=$BAR_POSITION BAR_HEIGHT=$BAR_HEIGHT BAR_CLOCK=$BAR_CLOCK BAR_HIDE=$BAR_HIDE \
+  BAR_WORKSPACES=$BAR_WORKSPACES python3 - "$tpl" "$out" <<'PY'
+import json, os, sys
+c = json.load(open(sys.argv[1]))
+hide = set(os.environ["BAR_HIDE"].split())
+for k in ("modules-left", "modules-center", "modules-right"):
+    c[k] = [m for m in c.get(k, []) if m not in hide]
+c["position"] = os.environ["BAR_POSITION"]
+c["height"] = int(os.environ["BAR_HEIGHT"])
+clk = os.environ["BAR_CLOCK"]
+c.setdefault("clock", {})["format"] = "{:" + clk + "}"
+c["clock"]["interval"] = 1 if "%S" in clk else 60
+c.setdefault("hyprland/workspaces", {})["persistent-workspaces"] = {"*": int(os.environ["BAR_WORKSPACES"])}
+json.dump(c, open(sys.argv[2], "w"), indent=2, ensure_ascii=False)
+PY
+}
+
+render_idle() {
+  {
+    echo '# GENERADO por hyprix-config (Super+Coma → Energía y pantalla)'
+    echo 'general {'
+    echo '    lock_cmd = pidof hyprlock || hyprlock'
+    echo '    before_sleep_cmd = loginctl lock-session'
+    echo '    after_sleep_cmd = hyprctl dispatch dpms on'
+    echo '}'
+    ((IDLE_DIM > 0)) && printf '\nlistener {\n    timeout = %s\n    on-timeout = brightnessctl -s set 10%%\n    on-resume = brightnessctl -r\n}\n' "$IDLE_DIM"
+    ((IDLE_LOCK > 0)) && printf '\nlistener {\n    timeout = %s\n    on-timeout = loginctl lock-session\n}\n' "$IDLE_LOCK"
+    ((IDLE_DPMS > 0)) && printf '\nlistener {\n    timeout = %s\n    on-timeout = hyprctl dispatch dpms off\n    on-resume = hyprctl dispatch dpms on\n}\n' "$IDLE_DPMS"
+    ((IDLE_SUSPEND > 0)) && printf '\nlistener {\n    timeout = %s\n    on-timeout = systemctl suspend\n}\n' "$IDLE_SUSPEND"
+  } > "$HY/hypridle.conf"
+  return 0
+}
+
+render_usb() {
+  local u="$HOME/.config/udiskie/config.yml"
+  [[ -f $u ]] && sed -i "s/^\(\s*automount:\).*/\1 $USB_AUTOMOUNT/" "$u"
+  return 0
+}
+
+apply_look()  { render_look; in_session && hyprctl -i 0 reload >/dev/null 2>&1; return 0; }
+apply_theme() { "$BIN/hyprix-theme" "$(cat "$H/current-theme" 2>/dev/null || echo tokyo-night)" >/dev/null; }
+apply_bar()   { render_bar; "$BIN/hyprix-bar" restart >/dev/null 2>&1; return 0; }
+apply_idle()  { render_idle; restart_in_session hypridle; }
+apply_usb()   { render_usb; restart_in_session udiskie; }
+apply_all() {
+  fill_missing "$S" "$DEFAULTS"; fill_missing "$G" "$G_DEFAULTS"; load
+  render_look; render_bar; render_idle; render_usb
+  apply_theme      # colores, fuentes, notificaciones; recarga Hyprland y reinicia la barra
+  restart_in_session hypridle
+  return 0
+}
+
+# =============================================================================
+#  LISTAS PARA ELEGIR
+# =============================================================================
+cursors() { { echo auto; for d in "$HOME/.local/share/icons"/*/cursors /usr/share/icons/*/cursors; do
+              [[ -d $d ]] && basename "$(dirname "$d")"; done; } | awk '!seen[$0]++'; }
+fonts_mono() { fc-list :spacing=mono family | cut -d, -f1 | sort -u; }
+fonts_all()  { fc-list : family | cut -d, -f1 | grep -viE 'emoji|awesome|symbol|math|mono|code|hack|courier' | sort -u; }
+
+# Apps instaladas que abren un tipo MIME → "Nombre<TAB>id.desktop"
+apps_for() {
+  python3 - "$1" <<'PY'
+import os, sys, glob, configparser
+mime = sys.argv[1]; seen = set()
+dirs = [os.path.expanduser("~/.local/share/applications"), "/usr/local/share/applications", "/usr/share/applications"]
+for d in dirs:
+    for p in sorted(glob.glob(os.path.join(d, "*.desktop"))):
+        i = os.path.basename(p)
+        if i in seen: continue
+        seen.add(i)
+        cp = configparser.RawConfigParser(strict=False, interpolation=None); cp.optionxform = str
+        try: cp.read(p, encoding="utf-8")
+        except Exception: continue
+        if not cp.has_section("Desktop Entry"): continue
+        e = cp["Desktop Entry"]
+        if mime in e.get("MimeType", "").split(";") and e.get("NoDisplay", "").lower() != "true":
+            print(f'{e.get("Name", i)}\t{i}')
+PY
+}
+app_name() { local id; id=$(xdg-mime query default "$1" 2>/dev/null); [[ -n $id ]] && apps_for "$1" | awk -F'\t' -v i="$id" '$2 == i { print $1; f = 1 } END { if (!f) print i }' || echo "—"; }
+
+# Tipos que cambia cada categoría
+MIME_browser="x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml"
+MIME_files="inode/directory"
+MIME_text="text/plain text/markdown text/x-log text/csv application/json application/xml text/xml application/x-yaml application/toml application/x-shellscript text/x-python text/x-csrc text/x-chdr text/x-c++src text/css text/x-ini"
+MIME_pdf="application/pdf application/x-pdf application/postscript application/epub+zip"
+MIME_images="image/png image/jpeg image/gif image/webp image/bmp image/tiff image/avif image/heic image/svg+xml"
+MIME_video="video/mp4 video/x-matroska video/webm video/quicktime video/x-msvideo video/mpeg audio/mpeg audio/ogg audio/flac audio/x-wav audio/mp4 audio/opus"
+MIME_archives="application/zip application/x-tar application/gzip application/x-compressed-tar application/x-xz-compressed-tar application/x-7z-compressed application/vnd.rar"
+
+choose_app() { # $1 título  $2 categoría
+  local var="MIME_$2" first sel id
+  first=${!var%% *}
+  sel=$(apps_for "$first" | cut -f1 | sort -u | pick "$1") || return 0
+  [[ -n $sel ]] || return 0
+  id=$(apps_for "$first" | awk -F'\t' -v n="$sel" '$1 == n { print $2; exit }')
+  [[ -n $id ]] || return 0
+  # shellcheck disable=SC2086
+  xdg-mime default "$id" ${!var}
+  [[ $2 == browser ]] && xdg-settings set default-web-browser "$id" 2>/dev/null
+  notify-send -t 2000 "Apps por defecto" "$1: $sel" 2>/dev/null || true
+}
+
+# =============================================================================
+#  MENÚS
+# =============================================================================
+# Muestra un submenú: $1 título, resto = líneas; devuelve la elegida
+menu_show() { local t=$1; shift; printf '%s\n' "$@" | fuzzel --dmenu --prompt "$t › " --width 58 --lines 20; }
+row() { printf ' %-30s %s' "$1" "$2"; }
+has() { [[ " $BAR_HIDE " != *" $1 "* ]] && echo "sí" || echo "no"; }
+toggle_hide() { local m=$1 h=" $BAR_HIDE "; if [[ $h == *" $m "* ]]; then h=${h/ $m / }; else h="$h$m "; fi; h=$(xargs <<<"$h"); set_key BAR_HIDE "$h"; }
+
+m_aspecto() {
+  while load; do
+    local v sel
+    sel=$(menu_show "Aspecto" \
+      "$(row 'Fuente de terminal/barra' "$FONT_MONO")" "$(row 'Fuente de interfaz' "$FONT_UI")" \
+      "$(row 'Tamaño terminal' "$SIZE_TERM")" "$(row 'Tamaño barra' "$SIZE_BAR px")" \
+      "$(row 'Tamaño lanzador' "$SIZE_LAUNCHER")" "$(row 'Tamaño interfaz y avisos' "$SIZE_UI")" \
+      "$(row 'Transparencia terminal' "$(pct "$ALPHA_TERM")")" "$(row 'Transparencia barra' "$(pct "$ALPHA_BAR")")" \
+      "$(row 'Transparencia lanzador' "$(pct "$ALPHA_LAUNCHER")")" "$(row 'Transparencia avisos' "$(pct "$ALPHA_NOTIF")")" \
+      "$(row 'Opacidad ventanas inactivas' "$(pct "$INACTIVE_OPACITY")")" \
+      "$(row 'Grosor de borde' "$BORDER px")" "$(row 'Redondeo de esquinas' "$ROUNDING px")" \
+      "$(row 'Separación entre ventanas' "$GAPS_IN px")" "$(row 'Margen exterior' "$GAPS_OUT px")" \
+      "$(row 'Desenfoque (blur)' "$BLUR · $BLUR_SIZE")" "$(row 'Sombras' "$SHADOW")" "$(row 'Animaciones' "$ANIM")" \
+      "$(row 'Tema del cursor' "$CURSOR_THEME")" "$(row 'Tamaño del cursor' "$CURSOR_SIZE")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"Fuente de terminal"*) v=$(fonts_mono | pick "Fuente monoespaciada") && set_key FONT_MONO "$v" && apply_theme ;;
+      *"Fuente de interfaz"*) v=$(fonts_all | pick "Fuente de interfaz") && set_key FONT_UI "$v" && apply_theme ;;
+      *"Tamaño terminal"*)    v=$(pick "Tamaño terminal" 8 8.5 9 9.5 10 10.5 11 12 13) && set_key SIZE_TERM "$v" && apply_theme ;;
+      *"Tamaño barra"*)       v=$(pick "Tamaño barra (px)" 9 10 11 12 13 14) && set_key SIZE_BAR "$v" && apply_theme ;;
+      *"Tamaño lanzador"*)    v=$(pick "Tamaño lanzador" 8 9 10 11 12 13) && set_key SIZE_LAUNCHER "$v" && apply_theme ;;
+      *"Tamaño interfaz"*)    v=$(pick "Tamaño interfaz" 8 8.5 9 9.5 10 11) && set_key SIZE_UI "$v" && apply_theme ;;
+      *"Transparencia terminal"*) v=$(pick "Opacidad terminal" 1.0 0.97 0.95 0.92 0.90 0.85 0.80 0.75) && set_key ALPHA_TERM "$v" && apply_theme ;;
+      *"Transparencia barra"*)    v=$(pick "Opacidad barra" 1.0 0.95 0.90 0.82 0.75 0.65 0.50) && set_key ALPHA_BAR "$v" && apply_theme ;;
+      *"Transparencia lanzador"*) v=$(pick "Opacidad lanzador" 1.0 0.95 0.90 0.85 0.80 0.70) && set_key ALPHA_LAUNCHER "$v" && apply_theme ;;
+      *"Transparencia avisos"*)   v=$(pick "Opacidad avisos" 1.0 0.95 0.90 0.88 0.80 0.70) && set_key ALPHA_NOTIF "$v" && apply_theme ;;
+      *"Opacidad ventanas"*)  v=$(pick "Ventanas inactivas" 1.0 0.97 0.94 0.90 0.85 0.80) && set_key INACTIVE_OPACITY "$v" && apply_look ;;
+      *"Grosor de borde"*)    v=$(pick "Borde (px)" 0 1 2 3) && set_key BORDER "$v" && apply_look ;;
+      *"Redondeo"*)           v=$(pick "Redondeo (px)" 0 4 6 8 10 12) && set_key ROUNDING "$v" && apply_look ;;
+      *"Separación"*)         v=$(pick "Entre ventanas (px)" 0 2 4 6 8 10) && set_key GAPS_IN "$v" && apply_look ;;
+      *"Margen exterior"*)    v=$(pick "Margen exterior (px)" 0 4 6 9 12 16 20) && set_key GAPS_OUT "$v" && apply_look ;;
+      *"Desenfoque"*)
+        v=$(pick "Blur" "apagado" "suave (2)" "normal (4)" "fuerte (6)" "muy fuerte (8)") || continue
+        case $v in apagado) set_key BLUR off ;; *) set_key BLUR on; set_key BLUR_SIZE "$(tr -dc '0-9' <<<"$v")" ;; esac
+        apply_look ;;
+      *"Sombras"*)            v=$(pick "Sombras" on off) && set_key SHADOW "$v" && apply_look ;;
+      *"Animaciones"*)        v=$(pick "Animaciones" rapidas normal lentas off) && set_key ANIM "$v" && apply_look ;;
+      *"Tema del cursor"*)    v=$(cursors | pick "Cursor") && set_key CURSOR_THEME "$v" && apply_look ;;
+      *"Tamaño del cursor"*)  v=$(pick "Cursor" 16 20 24 28 32) && set_key CURSOR_SIZE "$v" && apply_look ;;
+    esac
+  done
+}
+
+m_barra() {
+  while load; do
+    local v sel
+    sel=$(menu_show "Barra" \
+      "$(row 'Posición' "$BAR_POSITION")" "$(row 'Alto' "$BAR_HEIGHT px")" \
+      "$(row 'Formato del reloj' "$BAR_CLOCK")" "$(row 'Escritorios siempre visibles' "$BAR_WORKSPACES")" \
+      "$(row 'Ciudad del clima' "$WEATHER_CITY")" \
+      "$(row 'Mostrar clima' "$(has custom/weather)")" "$(row 'Mostrar actualizaciones' "$(has custom/updates)")" \
+      "$(row 'Mostrar VPN' "$(has custom/vpn)")" "$(row 'Mostrar luz nocturna' "$(has custom/nightlight)")" \
+      "$(row 'Mostrar CPU' "$(has cpu)")" "$(row 'Mostrar temperatura' "$(has temperature)")" \
+      "$(row 'Mostrar RAM' "$(has memory)")" "$(row 'Mostrar red' "$(has network)")" \
+      "$(row 'Mostrar bluetooth' "$(has bluetooth)")" "$(row 'Mostrar volumen' "$(has pulseaudio)")" \
+      "$(row 'Mostrar brillo' "$(has backlight)")" "$(row 'Mostrar batería' "$(has battery)")" \
+      "$(row 'Mostrar bandeja' "$(has tray)")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"Posición"*)       v=$(pick "Posición" top bottom) && set_key BAR_POSITION "$v" ;;
+      *"Alto"*)           v=$(pick "Alto (px)" 22 24 26 28 30 34) && set_key BAR_HEIGHT "$v" ;;
+      *"Formato del reloj"*)
+        v=$(pick "Reloj" "%a %d %b  %H:%M   (dom 25 oct  22:40)" "%H:%M   (22:40)" "%H:%M:%S   (22:40:15)" \
+                 "%d/%m  %H:%M   (25/10  22:40)" "%A %d de %B  %H:%M   (domingo 25 de octubre)" "%I:%M %p   (10:40 PM)") || continue
+        set_key BAR_CLOCK "$(sed 's/   (.*//' <<<"$v")" ;;
+      *"Escritorios"*)    v=$(pick "Escritorios fijos" 3 4 5 6 9) && set_key BAR_WORKSPACES "$v" ;;
+      *"Ciudad del clima"*) v=$(ask_text "Ciudad (ej: Viedma, Bariloche)") && [[ -n $v ]] && set_key WEATHER_CITY "$v" && rm -f "$HOME/.cache/hyprix-weather.json" ;;
+      *"Mostrar clima"*)  toggle_hide custom/weather ;;
+      *"Mostrar actualizaciones"*) toggle_hide custom/updates ;;
+      *"Mostrar VPN"*)    toggle_hide custom/vpn ;;
+      *"Mostrar luz"*)    toggle_hide custom/nightlight ;;
+      *"Mostrar CPU"*)    toggle_hide cpu ;;
+      *"Mostrar temperatura"*) toggle_hide temperature ;;
+      *"Mostrar RAM"*)    toggle_hide memory ;;
+      *"Mostrar red"*)    toggle_hide network ;;
+      *"Mostrar bluetooth"*) toggle_hide bluetooth ;;
+      *"Mostrar volumen"*) toggle_hide pulseaudio ;;
+      *"Mostrar brillo"*) toggle_hide backlight ;;
+      *"Mostrar batería"*) toggle_hide battery ;;
+      *"Mostrar bandeja"*) toggle_hide tray ;;
+    esac
+    load; apply_bar
+  done
+}
+
+m_fondos() {
+  while load; do
+    local v sel modo dir
+    case $WALL_MODE in propio) modo="el que elegiste" ;; color) modo="color liso" ;; *) modo="los del tema" ;; esac
+    dir=${WALL_DIR:-"$(xdg-user-dir PICTURES 2>/dev/null)/Fondos"}
+    sel=$(menu_show "Fondo y tema" \
+      "$(row 'Elegir fondo (vista previa)' "Super+Ctrl+Espacio")" \
+      "$(row 'Elegir imagen de cualquier carpeta' "")" \
+      "$(row 'Fondo actual' "$( [[ $WALL_MODE == propio ]] && basename "$WALL_FILE" || echo "$modo")")" \
+      "$(row 'Usar los fondos del tema' "$( [[ $WALL_MODE == tema ]] && echo '✔' )")" \
+      "$(row 'Usar color liso del tema' "$( [[ $WALL_MODE == color ]] && echo '✔' )")" \
+      "$(row 'Ajuste de la imagen' "$WALL_FILL")" \
+      "$(row 'Carpeta de fondos' "${dir/#$HOME/\~}")" \
+      "$(row 'Cambiar fondo solo cada' "$( ((WALL_ROTATE)) && echo "$WALL_ROTATE min" || echo nunca)")" \
+      "$(row 'Transición al cambiar' "$WALL_TRANSITION")" \
+      "$(row 'Tema de colores' "$(cat "$H/current-theme" 2>/dev/null)")" \
+      "$(row 'Bajar fondos para el tema' "")" \
+      "$(row 'Abrir carpeta de fondos' "")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"vista previa"*)      "$BIN/hyprix-bg" pick ;;
+      *"cualquier carpeta"*) "$BIN/hyprix-bg" choose ;;
+      *"Fondo actual"*)      [[ -f $WALL_FILE ]] && xdg-open "$WALL_FILE" ;;
+      *"fondos del tema"*)   "$BIN/hyprix-bg" theme ;;
+      *"color liso"*)        "$BIN/hyprix-bg" color ;;
+      *"Ajuste"*)            v=$(pick "Ajuste" "llenar (recorta para cubrir)" "ajustar (entera, con bordes)" "centrar (tamaño real)") || continue
+                             set_key WALL_FILL "${v%% *}"; "$BIN/hyprix-bg" ;;
+      *"Carpeta de fondos"*) v=$(pick "Carpeta" "~/Imágenes/Fondos (por defecto)" "~/Imágenes" "otra…") || continue
+                             case $v in
+                               *defecto*) set_key WALL_DIR "" ;;
+                               "~/Imágenes") set_key WALL_DIR "$(xdg-user-dir PICTURES)" ;;
+                               *) v=$(ask_text "Ruta completa de la carpeta") && [[ -d ${v/#\~/$HOME} ]] && set_key WALL_DIR "${v/#\~/$HOME}" ;;
+                             esac ;;
+      *"Cambiar fondo solo"*) v=$(pick "Rotar fondo (dentro de tu carpeta)" nunca 5 15 30 60 120) || continue
+                             [[ $v == nunca ]] && v=0; set_key WALL_ROTATE "$v" ;;
+      *"Transición"*)        v=$(pick "Transición (necesita awww)" fade wipe grow outer wave random none) && set_key WALL_TRANSITION "$v" ;;
+      *"Tema de colores"*)   "$BIN/hyprix-theme" --menu ;;
+      *"Bajar fondos"*)      foot --app-id=hyprix-float -e bash -c "$BIN/hyprix-walls -n 6 $(cat "$H/current-theme"); read -rp 'Enter para cerrar'" ;;
+      *"Abrir carpeta"*)     mkdir -p "$dir"; xdg-open "$dir" ;;
+    esac
+  done
+}
+
+m_avisos() {
+  while load; do
+    local v sel
+    sel=$(menu_show "Notificaciones" \
+      "$(row 'Posición' "$NOTIF_POS")" "$(row 'Duración' "$((NOTIF_TIMEOUT / 1000)) s")" "$(row 'Probar' "")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"Posición"*) v=$(pick "Posición" top-right top-center top-left bottom-right bottom-center bottom-left) && set_key NOTIF_POS "$v" && apply_theme ;;
+      *"Duración"*) v=$(pick "Duración (s)" 3 5 8 10 15) && set_key NOTIF_TIMEOUT "$((v * 1000))" && apply_theme ;;
+      *"Probar"*)   notify-send "HYPRIX" "Así se ven las notificaciones" ;;
+    esac
+  done
+}
+
+m_entrada() {
+  while load; do
+    local v sel kb
+    kb=$KB_LAYOUT; [[ -n $KB_VARIANT ]] && kb="$kb ($KB_VARIANT)"
+    sel=$(menu_show "Ventanas y entrada" \
+      "$(row 'Distribución de ventanas' "$LAYOUT")" \
+      "$(row 'El foco sigue al mouse' "$( ((FOLLOW_MOUSE)) && echo sí || echo no)")" \
+      "$(row 'Idioma del teclado' "$kb")" "$(row 'Bloq Mayús como Escape' "$KB_CAPS_ESC")" \
+      "$(row 'Repetición de teclado' "$REPEAT_RATE/s · $REPEAT_DELAY ms")" \
+      "$(row 'Scroll natural' "$NATURAL_SCROLL")" "$(row 'Velocidad de scroll' "$SCROLL_FACTOR")" \
+      "$(row 'Tocar para hacer click' "$TAP_TO_CLICK")" "$(row 'Velocidad del puntero' "$SENSITIVITY")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"Distribución"*) v=$(pick "Distribución" dwindle master) && set_key LAYOUT "$v" ;;
+      *"foco sigue"*)   v=$(pick "Foco sigue al mouse" sí no) && { [[ $v == sí ]] && set_key FOLLOW_MOUSE 1 || set_key FOLLOW_MOUSE 0; } ;;
+      *"Idioma"*)
+        v=$(pick "Teclado" "auto (el del sistema)" "us" "us internacional (acentos con ')" "es (España)" "latam") || continue
+        case $v in
+          auto*)  set_key KB_LAYOUT auto; set_key KB_VARIANT "" ;;
+          "us")   set_key KB_LAYOUT us;   set_key KB_VARIANT "" ;;
+          "us i"*) set_key KB_LAYOUT us;  set_key KB_VARIANT intl ;;
+          es*)    set_key KB_LAYOUT es;   set_key KB_VARIANT "" ;;
+          latam)  set_key KB_LAYOUT latam; set_key KB_VARIANT "" ;;
+        esac ;;
+      *"Bloq Mayús"*)   v=$(pick "Bloq Mayús = Escape" yes no) && set_key KB_CAPS_ESC "$v" ;;
+      *"Repetición"*)
+        v=$(pick "Repetición" "lenta (25/s · 400 ms)" "normal (40/s · 250 ms)" "rápida (55/s · 200 ms)") || continue
+        case $v in
+          lenta*)  set_key REPEAT_RATE 25; set_key REPEAT_DELAY 400 ;;
+          normal*) set_key REPEAT_RATE 40; set_key REPEAT_DELAY 250 ;;
+          rápida*) set_key REPEAT_RATE 55; set_key REPEAT_DELAY 200 ;;
+        esac ;;
+      *"Scroll natural"*)       v=$(pick "Scroll natural" true false) && set_key NATURAL_SCROLL "$v" ;;
+      *"Velocidad de scroll"*)  v=$(pick "Velocidad de scroll" 0.3 0.5 0.7 1.0 1.5) && set_key SCROLL_FACTOR "$v" ;;
+      *"Tocar"*)                v=$(pick "Tocar para click" true false) && set_key TAP_TO_CLICK "$v" ;;
+      *"Velocidad del puntero"*) v=$(pick "Puntero (-1 lento … 1 rápido)" -0.5 -0.3 0 0.2 0.4 0.6) && set_key SENSITIVITY "$v" ;;
+    esac
+    load; apply_look
+  done
+}
+
+m_energia() {
+  while load; do
+    local v sel
+    sel=$(menu_show "Energía y pantalla" \
+      "$(row 'Atenuar pantalla a los' "$(mins "$IDLE_DIM")")" "$(row 'Bloquear a los' "$(mins "$IDLE_LOCK")")" \
+      "$(row 'Apagar pantalla a los' "$(mins "$IDLE_DPMS")")" "$(row 'Suspender a los' "$(mins "$IDLE_SUSPEND")")" \
+      "$(row 'Luz nocturna desde' "$NL_START")" "$(row 'Luz nocturna hasta' "$NL_END")" \
+      "$(row 'Luz nocturna: calidez' "$NL_TEMP K")" \
+      "$(row 'Aviso de batería baja' "$BAT_LOW %")" "$(row 'Aviso de batería crítica' "$BAT_CRIT %")" \
+      "$(row 'Suspender con batería en' "$BAT_SUSPEND %")" \
+      "$(row 'Perfil de energía' "$(powerprofilesctl get 2>/dev/null || echo —)")") || return 0
+    [[ -n $sel ]] || return 0
+    secs() { case $1 in nunca) echo 0 ;; *s) echo "${1% s}" ;; *) echo $(( ${1% min} * 60 )) ;; esac; }
+    case "$sel" in
+      *"Atenuar"*)  v=$(pick "Atenuar" "nunca" "2 min" "3 min" "4 min" "5 min" "10 min") && set_key IDLE_DIM "$(secs "$v")" && apply_idle ;;
+      *"Bloquear"*) v=$(pick "Bloquear" "nunca" "3 min" "5 min" "10 min" "15 min" "30 min") && set_key IDLE_LOCK "$(secs "$v")" && apply_idle ;;
+      *"Apagar pantalla"*) v=$(pick "Apagar pantalla" "nunca" "1 min" "5 min" "6 min" "10 min" "20 min") && set_key IDLE_DPMS "$(secs "$v")" && apply_idle ;;
+      *"Suspender a los"*) v=$(pick "Suspender" "nunca" "10 min" "15 min" "30 min" "60 min") && set_key IDLE_SUSPEND "$(secs "$v")" && apply_idle ;;
+      *"desde"*)    v=$(pick "Desde" 18:00 19:00 19:30 20:00 20:30 21:00 22:00) && set_key NL_START "$v" ;;
+      *"hasta"*)    v=$(pick "Hasta" 05:30 06:00 06:30 07:00 07:30 08:00) && set_key NL_END "$v" ;;
+      *"calidez"*)  v=$(pick "Temperatura (más bajo = más cálido)" 2800 3200 3600 4000 4500 5000) && set_key NL_TEMP "$v" && { pkill -x hyprsunset; pkill -x gammastep; "$BIN/hyprix-nightlight" apply force >/dev/null; } ;;
+      *"batería baja"*)    v=$(pick "Aviso (%)" 10 15 20 25) && set_key BAT_LOW "$v" ;;
+      *"batería crítica"*) v=$(pick "Crítico (%)" 3 5 8 10) && set_key BAT_CRIT "$v" ;;
+      *"Suspender con"*)   v=$(pick "Suspender en (%)" 2 3 5 7) && set_key BAT_SUSPEND "$v" ;;
+      *"Perfil"*)   v=$(pick "Perfil" power-saver balanced performance) && powerprofilesctl set "$v" ;;
+    esac
+  done
+}
+
+m_apps() {
+  while load; do
+    local v sel
+    sel=$(menu_show "Apps por defecto" \
+      "$(row 'Navegador (Super+B)' "$(app_name x-scheme-handler/https)")" \
+      "$(row 'Archivos (Super+E)' "$(app_name inode/directory)")" \
+      "$(row 'Editor de terminal (Super+N)' "$APP_TERM_EDITOR")" \
+      "$(row 'Textos y código' "$(app_name text/plain)")" \
+      "$(row 'PDF' "$(app_name application/pdf)")" \
+      "$(row 'Imágenes' "$(app_name image/png)")" \
+      "$(row 'Video y música' "$(app_name video/mp4)")" \
+      "$(row 'Comprimidos' "$(app_name application/zip)")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"Navegador"*)  choose_app "Navegador" browser ;;
+      *"Archivos"*)   choose_app "Archivos" files ;;
+      *"Editor de terminal"*)
+        v=$(for e in nano nvim vim vi micro helix hx; do command -v "$e" >/dev/null && echo "$e"; done | pick "Editor") && set_key APP_TERM_EDITOR "$v" ;;
+      *"Textos"*)     choose_app "Textos y código" text ;;
+      *"PDF"*)        choose_app "PDF" pdf ;;
+      *"Imágenes"*)   choose_app "Imágenes" images ;;
+      *"Video"*)      choose_app "Video y música" video ;;
+      *"Comprimidos"*) choose_app "Comprimidos" archives ;;
+    esac
+  done
+}
+
+m_sistema() {
+  while load; do
+    local v sel
+    sel=$(menu_show "Sistema" \
+      "$(row 'Montar pendrives solos' "$USB_AUTOMOUNT")" \
+      "$(row 'Carpeta de capturas' "${SHOT_DIR:-Imágenes/Capturas}")" \
+      "$(row 'Editar capturas' "$SHOT_EDIT")" \
+      "$(row 'Restaurar todo por defecto' "")") || return 0
+    [[ -n $sel ]] || return 0
+    case "$sel" in
+      *"pendrives"*) v=$(pick "Montar solos" true false) && set_key USB_AUTOMOUNT "$v" && apply_usb ;;
+      *"Carpeta"*)   v=$(pick "Carpeta" "Imágenes/Capturas" "Escritorio" "Descargas" "otra…") || continue
+                     case $v in
+                       Imágenes*) set_key SHOT_DIR "" ;;
+                       Escritorio) set_key SHOT_DIR "$(xdg-user-dir DESKTOP)" ;;
+                       Descargas) set_key SHOT_DIR "$(xdg-user-dir DOWNLOAD)" ;;
+                       *) v=$(ask_text "Ruta completa") && [[ -n $v ]] && set_key SHOT_DIR "${v/#\~/$HOME}" ;;
+                     esac ;;
+      *"Editar"*)    v=$(pick "Después de capturar" "preguntar (click en el aviso)" "siempre (abre el editor)" "nunca (sólo copiar)") || continue
+                     set_key SHOT_EDIT "${v%% *}" ;;
+      *"Restaurar"*) [[ $(pick "¿Restaurar TODOS los ajustes?" No Sí) == Sí ]] && reset_defaults && apply_all ;;
+    esac
+  done
+}
+
+menu() {
+  while true; do
+    local sel
+    sel=$(menu_show "Configuración" \
+      "  Aspecto            fuentes, tamaños, transparencias, bordes, efectos, cursor" \
+      "  Barra              posición, reloj, módulos visibles, clima" \
+      "  Fondo y tema       elegir fondo, ajuste, rotación, tema de colores" \
+      "  Notificaciones     posición y duración" \
+      "  Ventanas y entrada distribución, teclado, trackpad, puntero" \
+      "  Energía y pantalla inactividad, luz nocturna, batería" \
+      "  Apps por defecto   navegador, archivos, PDF, imágenes, video" \
+      "  Sistema            pendrives, capturas, restaurar") || return 0
+    case "$sel" in
+      *Aspecto*)         m_aspecto ;;
+      *Barra*)           m_barra ;;
+      *Fondo*)           m_fondos ;;
+      *Notificaciones*)  m_avisos ;;
+      *Ventanas*)        m_entrada ;;
+      *Energía*)         m_energia ;;
+      *Apps*)            m_apps ;;
+      *Sistema*)         m_sistema ;;
+      *)                 return 0 ;;
+    esac
+  done
+}
+
+reset_defaults() {
+  { echo "# HYPRIX — ajustes (los edita hyprix-config / Super+Coma)"; echo "$DEFAULTS"; } > "$S"
+  { echo "# HYPRIX — luz nocturna, batería y clima (se leen cada minuto)"; echo "$G_DEFAULTS"; } > "$G"
+}
+
+case "${1:-}" in
+  --apply) apply_all; echo "Ajustes aplicados." ;;
+  --reset) reset_defaults; apply_all; echo "Valores por defecto restaurados." ;;
+  --get)   load; echo "${!2:-}" ;;
+  --set)   fill_missing "$S" "$DEFAULTS"; set_key "$2" "$3" && apply_all ;;
+  --setq)  fill_missing "$S" "$DEFAULTS"; set_key "$2" "$3" ;;
+  *)       [[ -f $S ]] || reset_defaults; fill_missing "$S" "$DEFAULTS"; fill_missing "$G" "$G_DEFAULTS"; menu ;;
+esac

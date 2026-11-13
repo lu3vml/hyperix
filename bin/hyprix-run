@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# hyprix-run — lanzador de HYPRIX (Super+Espacio)
+#   texto       apps            =expr   calculadora     /texto  archivos
+#   !comando    terminal        ?texto  web (?w wiki, ?y youtube)
+# Shift+Enter usa lo escrito aunque coincida con una app.
+export LC_NUMERIC=C
+CACHE="${XDG_RUNTIME_DIR:-/tmp}/hyprix-run"; mkdir -p "$CACHE"
+MAP="$CACHE/apps.map"
+
+fz() { fuzzel --dmenu "$@"; }
+PH=(); fuzzel --help 2>&1 | grep -q -- '--placeholder' && PH=(--placeholder "apps · =calc · /archivos · !comando · ?web")
+
+# Lista de apps (.desktop), con iconos, y mapa nombre → id
+python3 - "$MAP" <<'PY' > "$CACHE/apps.list"
+import os, sys, glob, configparser
+lang = (os.environ.get("LANG", "") or "").split(".")[0]
+short = lang.split("_")[0]
+dirs = [os.path.expanduser("~/.local/share/applications"),
+        "/var/lib/flatpak/exports/share/applications",
+        "/usr/local/share/applications", "/usr/share/applications"]
+seen, rows = set(), []
+for d in dirs:
+    for path in sorted(glob.glob(os.path.join(d, "**", "*.desktop"), recursive=True)):
+        did = os.path.relpath(path, d).replace(os.sep, "-")
+        if did in seen: continue
+        seen.add(did)
+        cp = configparser.RawConfigParser(strict=False, interpolation=None)
+        cp.optionxform = str
+        try: cp.read(path, encoding="utf-8")
+        except Exception: continue
+        if not cp.has_section("Desktop Entry"): continue
+        e = cp["Desktop Entry"]
+        if e.get("Type") != "Application": continue
+        if e.get("NoDisplay", "").lower() == "true" or e.get("Hidden", "").lower() == "true": continue
+        name = e.get(f"Name[{lang}]") or e.get(f"Name[{short}]") or e.get("Name")
+        if not name: continue
+        rows.append((name.strip(), did[:-8], e.get("Icon", "")))
+rows.sort(key=lambda r: r[0].lower())
+with open(sys.argv[1], "w") as m:
+    for name, did, icon in rows:
+        m.write(f"{name}\t{did}\n")
+        sys.stdout.write(f"{name}\0icon\x1f{icon}\n" if icon else f"{name}\n")
+PY
+
+q=$(fz --prompt "› " "${PH[@]}" < "$CACHE/apps.list") || exit 0
+[[ -n $q ]] || exit 0
+
+# ¿Es una app?
+id=$(awk -F'\t' -v n="$q" '$1 == n { print $2; exit }' "$MAP")
+if [[ -n $id ]]; then setsid -f gtk-launch "$id" >/dev/null 2>&1; exit 0; fi
+
+urlenc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote_plus(sys.argv[1]))' "$1"; }
+calc() {
+  local expr=$1 res
+  res=$(qalc -t -- "$expr" 2>/dev/null | tail -n1)
+  [[ -n $res ]] || { notify-send "Calculadora" "No entendí: $expr"; return; }
+  if fz --prompt "$expr = " --lines 1 <<<"$res" >/dev/null; then
+    wl-copy -- "$res"; notify-send -t 2000 "Copiado" "$res"
+  fi
+}
+
+case "$q" in
+  =*) calc "${q#=}" ;;
+  /*)
+    term=${q#/}
+    f=$( (fdfind -i -H --exclude .git --exclude .cache --max-results 400 -- "$term" "$HOME" 2>/dev/null \
+          || fd -i -H --max-results 400 -- "$term" "$HOME") | sed "s|^$HOME|~|" \
+        | fz --prompt "Archivos › " --width 70) || exit 0
+    [[ -n $f ]] && setsid -f xdg-open "${f/#\~/$HOME}" >/dev/null 2>&1 ;;
+  !*) foot --app-id=hyprix-float -e bash -lc "${q#!}; echo; read -rp 'Enter para cerrar'" ;;
+  '?w '*) xdg-open "https://es.wikipedia.org/w/index.php?search=$(urlenc "${q#\?w }")" ;;
+  '?y '*) xdg-open "https://www.youtube.com/results?search_query=$(urlenc "${q#\?y }")" ;;
+  '?'*)   xdg-open "https://duckduckgo.com/?q=$(urlenc "${q#\?}")" ;;
+  *)
+    # ¿parece una cuenta? (2+2, 3*pi, sqrt(2), 10 km to mi…)
+    re_num='^[0-9. ()]*[0-9][0-9a-zA-Z. +*/^%()-]*$'; re_op='[+*/^%-]| to |sqrt|pi'
+    if [[ $q =~ $re_num && $q =~ $re_op ]]; then
+      calc "$q"
+    else
+      xdg-open "https://duckduckgo.com/?q=$(urlenc "$q")"
+    fi ;;
+esac

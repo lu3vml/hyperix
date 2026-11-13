@@ -1,0 +1,14 @@
+# Paquetes que HYPRIX necesita. hyprix-update instala los que falten.
+# Se piden a trixie-backports (si están ahí) y si no a Debian 13.
+hyprland hyprlock hypridle hyprpolkitagent xdg-desktop-portal-hyprland hyprland-guiutils hyprsunset swayosd
+nano network-manager bluez blueman 
+pipewire pipewire-pulse pipewire-alsa wireplumber pavucontrol 
+brightnessctl playerctl libnotify-bin 
+waybar fuzzel mako-notifier swaybg grim slurp wl-clipboard cliphist 
+foot nautilus gvfs gvfs-backends ffmpegthumbnailer imv zenity mpv firefox-esr imagemagick 
+xdg-desktop-portal-gtk xdg-user-dirs qt6-wayland qtwayland5 
+adwaita-icon-theme gnome-themes-extra 
+fonts-inter fonts-jetbrains-mono fonts-cascadia-code fonts-firacode fonts-hack fonts-ibm-plex fonts-ubuntu fonts-roboto fonts-dejavu fonts-font-awesome fonts-noto fonts-noto-color-emoji 
+papirus-icon-theme qt6-gtk-platformtheme qt5-gtk-platformtheme 
+qalc libgtk-3-bin pulsemixer papers gnome-text-editor file-roller udiskie swappy p7zip-full unrar-free 
+neovim btop fastfetch fzf ripgrep fd-find bat eza zoxide

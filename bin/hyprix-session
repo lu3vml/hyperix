@@ -1,0 +1,8 @@
+#!/bin/sh
+# Arranque de la sesión Hyprland desde tty
+export XDG_CURRENT_DESKTOP=Hyprland
+export XDG_SESSION_DESKTOP=Hyprland
+export XDG_SESSION_TYPE=wayland
+if command -v start-hyprland >/dev/null 2>&1; then start-hyprland; else Hyprland; fi
+# al salir: bajar los servicios que dependen de la sesión gráfica
+systemctl --user stop hyprix-waybar.service 2>/dev/null

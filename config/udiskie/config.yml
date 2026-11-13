@@ -1,0 +1,15 @@
+program_options:
+  automount: true
+  notify: true
+  tray: auto          # ícono en la barra sólo cuando hay algo para expulsar
+  menu: flat
+  file_manager: nautilus
+  terminal: foot -D
+
+notifications:
+  timeout: 5
+  device_mounted: 6
+  device_unmounted: 3
+  device_added: false
+  device_removed: 3
+  job_failed: -1

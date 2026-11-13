@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Clima para Waybar (wttr.in), con caché de 30 min
+H="$HOME/.config/hyprix"; WEATHER_CITY=Viedma
+# shellcheck disable=SC1091
+[[ -f "$H/hyprix.conf" ]] && source "$H/hyprix.conf"
+C="$HOME/.cache/hyprix-weather.json"; mkdir -p "$(dirname "$C")"
+if [[ ! -s $C || $(( $(date +%s) - $(stat -c %Y "$C") )) -gt 1800 ]]; then
+  raw=$(curl -fsS --max-time 8 "https://wttr.in/${WEATHER_CITY// /+}?format=%c|%t|%C|%f|%w|%h|%l&lang=es&m" 2>/dev/null)
+  if [[ $raw == *"|"* && $raw != *"Unknown"* ]]; then
+    IFS='|' read -r ic t cond feel wind hum loc <<<"$raw"
+    ic=$(echo "$ic" | xargs); t=${t#+}; feel=${feel#+}
+    printf '{"text":"%s %s","tooltip":"%s\\n%s · sensación %s\\nViento %s · humedad %s"}\n' \
+      "$ic" "$t" "$loc" "$cond" "$feel" "$wind" "$hum" > "$C"
+  fi
+fi
+[[ -s $C ]] && cat "$C" || echo '{"text":"","tooltip":"Sin datos de clima"}'

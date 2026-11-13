@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Paquetes con actualización pendiente (Debian refresca la lista solo, apt-daily)
+n=$(apt list --upgradable 2>/dev/null | grep -c 'upgradable')
+if (( n > 0 )); then
+  lst=$(apt list --upgradable 2>/dev/null | grep upgradable | cut -d/ -f1 | head -n 15 | tr '\n' ' ')
+  printf '{"text":"%s %s","class":"pending","tooltip":"%s actualizaciones\\n%s\\nClick: actualizar"}\n' $'' "$n" "$n" "$lst"
+else
+  echo '{"text":"","class":"none"}'
+fi

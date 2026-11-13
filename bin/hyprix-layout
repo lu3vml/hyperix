@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Alterna entre los layouts dwindle y master
+cur=$(hyprctl getoption general:layout | awk '/str:/ {print $2}')
+if [[ $cur == master ]]; then new=dwindle; else new=master; fi
+hyprctl keyword general:layout "$new" >/dev/null
+notify-send -t 1200 "Layout" "$new" 2>/dev/null || true

@@ -1,0 +1,5 @@
+NAME="Matte Black"
+GNOME_ACCENT=orange THEME_FOLDERS=orange
+BG=121212 FG=bebebe ACCENT=e68e0d MUTED=555555 URGENT=d35f5f WARN=b91c1c
+C0=1e1e1e C1=d35f5f C2=ffc107 C3=b91c1c C4=e68e0d C5=d35f5f C6=bebebe C7=8a8a8d
+C8=555555 C9=b91c1c C10=ffc107 C11=b90a0a C12=f59e0b C13=b91c1c C14=eaeaea C15=bebebe

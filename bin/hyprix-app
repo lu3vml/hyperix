@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# hyprix-app browser|files|editor — abre la app elegida en Super+Coma → Apps por defecto
+APP_TERM_EDITOR=nano
+# shellcheck disable=SC1091
+[[ -f "$HOME/.config/hyprix/settings.conf" ]] && source "$HOME/.config/hyprix/settings.conf"
+launch() { local id=$1; [[ -n $id ]] || return 1
+  [[ $id == org.gnome.Nautilus.desktop ]] && exec nautilus --new-window
+  exec gtk-launch "${id%.desktop}"; }
+case "${1:-}" in
+  browser) launch "$(xdg-settings get default-web-browser 2>/dev/null)" \
+             || launch "$(xdg-mime query default x-scheme-handler/https)" || exec firefox-esr ;;
+  files)   launch "$(xdg-mime query default inode/directory)" || exec nautilus --new-window ;;
+  editor)  exec foot -e "${APP_TERM_EDITOR:-nano}" ;;
+  *) echo "uso: hyprix-app browser|files|editor"; exit 1 ;;
+esac

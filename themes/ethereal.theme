@@ -1,0 +1,5 @@
+NAME="Ethereal"
+GNOME_ACCENT=purple THEME_FOLDERS=indigo
+BG=060b1e FG=ffcead ACCENT=7d82d9 MUTED=6d7db6 URGENT=ed5b5a WARN=e9bb4f
+C0=131a3a C1=ed5b5a C2=92a593 C3=e9bb4f C4=7d82d9 C5=c89dc1 C6=a3bfd1 C7=c9b8a6
+C8=6d7db6 C9=faaaa9 C10=c4cfc4 C11=f7dc9c C12=c2c4f0 C13=ead7e7 C14=dfeaf0 C15=ffcead

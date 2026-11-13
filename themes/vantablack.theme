@@ -1,0 +1,5 @@
+NAME="Vantablack"
+GNOME_ACCENT=slate THEME_FOLDERS=grey
+BG=000000 FG=ffffff ACCENT=8d8d8d MUTED=7a7a7a URGENT=a4a4a4 WARN=cecece
+C0=1a1a1a C1=a4a4a4 C2=b6b6b6 C3=cecece C4=8d8d8d C5=9b9b9b C6=b0b0b0 C7=ececec
+C8=505050 C9=a4a4a4 C10=b6b6b6 C11=cecece C12=8d8d8d C13=9b9b9b C14=b0b0b0 C15=ffffff

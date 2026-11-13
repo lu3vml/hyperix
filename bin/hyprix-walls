@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# hyprix-walls — baja fondos de repos de la comunidad a cada tema de HYPRIX
+#   hyprix-walls            baja los que falten (N por fuente)
+#   hyprix-walls -n 10      cantidad por fuente (default 6)
+#   hyprix-walls nord dracula   sólo para esos temas
+#   hyprix-walls --list     muestra las fuentes
+# Sólo descarga los archivos elegidos (clon parcial de git), no el repo entero.
+set -uo pipefail
+H="$HOME/.config/hyprix"; CACHE="$HOME/.cache/hyprix-walls"
+N=6
+[[ ${1:-} == -n ]] && { N=${2:-6}; shift 2; }
+
+# tema | repo | carpeta dentro del repo ("" = todo el repo)
+SOURCES=(
+  "tokyo-night|https://github.com/basecamp/omarchy|themes/tokyo-night/backgrounds"
+  "nord|https://github.com/basecamp/omarchy|themes/nord/backgrounds"
+  "nord|https://github.com/linuxdotexe/nordic-wallpapers|wallpapers"
+  "gruvbox|https://github.com/basecamp/omarchy|themes/gruvbox/backgrounds"
+  "gruvbox|https://github.com/AngelJumbo/gruvbox-wallpapers|wallpapers"
+  "catppuccin|https://github.com/basecamp/omarchy|themes/catppuccin/backgrounds"
+  "catppuccin|https://github.com/orangci/walls-catppuccin-mocha|"
+  "fosforo|https://github.com/basecamp/omarchy|themes/hackerman/backgrounds"
+  "fosforo|https://github.com/basecamp/omarchy|themes/osaka-jade/backgrounds"
+  "rose-pine|https://github.com/basecamp/omarchy|themes/rose-pine/backgrounds"
+  "dracula|https://github.com/dracula/wallpaper|first-collection"
+  "everforest|https://github.com/basecamp/omarchy|themes/everforest/backgrounds"
+  "kanagawa|https://github.com/basecamp/omarchy|themes/kanagawa/backgrounds"
+  "osaka-jade|https://github.com/basecamp/omarchy|themes/osaka-jade/backgrounds"
+  "matte-black|https://github.com/basecamp/omarchy|themes/matte-black/backgrounds"
+  "ristretto|https://github.com/basecamp/omarchy|themes/ristretto/backgrounds"
+  "ethereal|https://github.com/basecamp/omarchy|themes/ethereal/backgrounds"
+  "miasma|https://github.com/basecamp/omarchy|themes/miasma/backgrounds"
+  "retro-82|https://github.com/basecamp/omarchy|themes/retro-82/backgrounds"
+  "vantablack|https://github.com/basecamp/omarchy|themes/vantablack/backgrounds"
+  "lumon|https://github.com/basecamp/omarchy|themes/lumon/backgrounds"
+)
+ONLY=" $* "   # temas pedidos (vacío = todos)
+
+if [[ ${1:-} == --list ]]; then printf '%s\n' "${SOURCES[@]}" | column -t -s'|'; exit 0; fi
+
+command -v git >/dev/null || { echo "Falta git: sudo apt install git"; exit 1; }
+IM=$(command -v magick || command -v convert || true)
+if command -v identify >/dev/null; then ID=(identify); elif command -v magick >/dev/null; then ID=(magick identify); else ID=(); fi
+mkdir -p "$CACHE"
+
+total=0
+for src in "${SOURCES[@]}"; do
+  IFS='|' read -r theme url path <<<"$src"
+  [[ $ONLY == "  " || $ONLY == *" $theme "* ]] || continue
+  name=$(basename "$url"); repo="$CACHE/$name"; out="$H/backgrounds/$theme"
+  mkdir -p "$out"
+  echo -e "\e[36m==> $theme ← $name${path:+/$path}\e[0m"
+
+  # clon parcial: sólo árbol, sin blobs
+  if [[ ! -d $repo/.git ]]; then
+    git clone -q --depth 1 --filter=blob:none --no-checkout "$url" "$repo" 2>/dev/null \
+      || { echo "   ! no pude clonar $url"; continue; }
+  fi
+
+  mapfile -t files < <(git -C "$repo" ls-tree -r --name-only HEAD -- ${path:+"$path"} 2>/dev/null \
+    | grep -iE '\.(jpe?g|png|webp)$')
+  if ((${#files[@]} == 0)); then echo "   ! sin imágenes en esa ruta (¿cambió el repo?)"; continue; fi
+
+  # omitir las que ya bajamos
+  pick=()
+  for f in "${files[@]}"; do
+    dst="$out/${name}-$(basename "$f")"
+    [[ -e $dst || -e ${dst%.*}.jpg ]] || pick+=("$f")
+  done
+  ((${#pick[@]})) || { echo "   ✔ ya están todas"; continue; }
+  mapfile -t pick < <(printf '%s\n' "${pick[@]}" | shuf -n "$N")
+
+  for f in "${pick[@]}"; do
+    git -C "$repo" checkout -q HEAD -- "$f" 2>/dev/null || { echo "   ! falló $f"; continue; }
+    dst="$out/${name}-$(basename "$f")"
+    # achicar las gigantes (algunas vienen en 8K) a 2880 px de ancho
+    w=0; ((${#ID[@]})) && w=$("${ID[@]}" -format '%w' "$repo/$f[0]" 2>/dev/null || echo 0)
+    if [[ -n $IM && $w =~ ^[0-9]+$ ]] && (( w > 2880 )); then
+      dst="${dst%.*}.jpg"
+      "$IM" "$repo/$f" -resize 2880x -quality 90 "$dst" 2>/dev/null || cp "$repo/$f" "$dst"
+    else
+      cp "$repo/$f" "$dst"
+    fi
+    rm -f "$repo/$f"
+    echo "   + $(basename "$dst")"; total=$((total + 1))
+  done
+done
+
+echo
+echo "Listo: $total fondos nuevos en ~/.config/hyprix/backgrounds/<tema>/"
+echo "Elegilos con Super+Ctrl+Espacio (están en ~/Imágenes/Fondos → Fondos de los temas HYPRIX)."
